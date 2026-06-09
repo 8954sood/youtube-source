@@ -180,7 +180,7 @@ public class Web extends StreamingNonMusicClient {
                     getConfigVisitorData(), PoTokenProvider.TOKEN_TYPE_GVS);
 
                 if (result != null && result.poToken != null) {
-                    log.debug("Applying external GVS 'pot' parameter on playback URI for videoId={} client={}",
+                    log.info("Applied GVS PO token to format URL/request videoId={} client={}",
                         videoId, getIdentifier());
                     URIBuilder builder = new URIBuilder(resolvedPlaybackUri);
                     builder.addParameter("pot", result.poToken);

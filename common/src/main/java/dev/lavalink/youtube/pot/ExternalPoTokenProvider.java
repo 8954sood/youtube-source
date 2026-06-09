@@ -13,6 +13,9 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -35,6 +38,7 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
     private final String command;
     private final long timeoutMs;
     private final PoTokenCache cache;
+    private final ConcurrentMap<String, String> visitorDataByVideoAndClient = new ConcurrentHashMap<>();
 
     public ExternalPoTokenProvider(@NotNull String command, long timeoutMs, @NotNull PoTokenCache cache) {
         this.command = command;
@@ -48,14 +52,24 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                                     @NotNull String clientName,
                                     @Nullable String visitorData,
                                     @NotNull String tokenType) {
-        PoTokenResult cached = cache.get(videoId, clientName, tokenType, visitorData);
+        String sessionKey = videoId + "|" + clientName;
+        String effectiveVisitorData = visitorData;
+
+        if (effectiveVisitorData == null && tokenType.equals(TOKEN_TYPE_GVS)) {
+            effectiveVisitorData = visitorDataByVideoAndClient.get(sessionKey);
+        }
+
+        PoTokenResult cached = cache.get(videoId, clientName, tokenType, effectiveVisitorData);
+        String tokenLabel = tokenType.equals(TOKEN_TYPE_PLAYER) ? "Player" : "GVS";
 
         if (cached != null) {
-            log.debug("PO token cache hit videoId={} client={} tokenType={}", videoId, clientName, tokenType);
+            log.info("{} PO token provider cache hit videoId={} client={}", tokenLabel, videoId, clientName);
             return cached;
         }
 
-        log.debug("PO token cache miss, invoking provider videoId={} client={} tokenType={}", videoId, clientName, tokenType);
+        log.info("{} PO token provider cache miss videoId={} client={}", tokenLabel, videoId, clientName);
+        log.info("Calling external PO token provider tokenType={} videoId={} client={}",
+            tokenType, videoId, clientName);
 
         File executable = new File(command);
 
@@ -72,45 +86,56 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
             args.add(videoId);
             args.add(clientName);
             args.add(tokenType);
-            args.add(visitorData != null ? visitorData : "");
+            args.add(effectiveVisitorData != null ? effectiveVisitorData : "");
 
             ProcessBuilder builder = new ProcessBuilder(args);
-            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
 
             process = builder.start();
 
-            // Drain stdout on a background daemon thread so a hung/slow process cannot block us
-            // past the timeout. destroyForcibly() on timeout closes the stream and unblocks it.
             final Process started = process;
             final StringBuilder stdout = new StringBuilder();
-            Thread reader = new Thread(() -> {
+            final StringBuilder stderr = new StringBuilder();
+            Thread stdoutReader = new Thread(() -> {
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(started.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = r.readLine()) != null) {
                         stdout.append(line);
                     }
                 } catch (Exception ignored) {
-                    // stream closed (e.g. process destroyed) — nothing to do
                 }
             }, "pot-provider-stdout");
-            reader.setDaemon(true);
-            reader.start();
+            Thread stderrReader = new Thread(() -> {
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(started.getErrorStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (stderr.length() > 0) {
+                            stderr.append(' ');
+                        }
+                        stderr.append(line);
+                    }
+                } catch (Exception ignored) {
+                }
+            }, "pot-provider-stderr");
+            stdoutReader.setDaemon(true);
+            stderrReader.setDaemon(true);
+            stdoutReader.start();
+            stderrReader.start();
 
             if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                log.warn("External PO token provider timed out after {}ms videoId={} client={} tokenType={}",
-                    timeoutMs, videoId, clientName, tokenType);
+                log.warn("External PO token provider timed out after {}ms tokenType={} videoId={} client={} stderr={}",
+                    timeoutMs, tokenType, videoId, clientName, summarizeStderr(stderr));
                 process.destroyForcibly();
                 return null;
             }
 
-            // Process exited; let the reader finish draining whatever is buffered.
-            reader.join(1000);
+            stdoutReader.join(1000);
+            stderrReader.join(1000);
 
             int exitCode = process.exitValue();
 
             if (exitCode != 0) {
-                log.warn("External PO token provider exited with code {} videoId={} client={} tokenType={}",
-                    exitCode, videoId, clientName, tokenType);
+                log.warn("External PO token provider exited with code {} tokenType={} videoId={} client={} stderr={}",
+                    exitCode, tokenType, videoId, clientName, summarizeStderr(stderr));
                 return null;
             }
 
@@ -123,11 +148,21 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                 return null;
             }
 
-            String resolvedVisitorData = json.has("visitorData") ? json.getString("visitorData") : visitorData;
+            Object visitorDataValue = json.get("visitorData");
+            String resolvedVisitorData = visitorDataValue instanceof String && !((String) visitorDataValue).isEmpty()
+                ? (String) visitorDataValue
+                : effectiveVisitorData;
             long expiresAtEpochMs = json.getLong("expiresAtEpochMs", 0L);
 
             PoTokenResult result = new PoTokenResult(poToken, resolvedVisitorData, expiresAtEpochMs);
-            cache.put(videoId, clientName, tokenType, visitorData, result);
+            cache.put(videoId, clientName, tokenType, effectiveVisitorData, result);
+
+            if (tokenType.equals(TOKEN_TYPE_PLAYER) && resolvedVisitorData != null) {
+                visitorDataByVideoAndClient.put(sessionKey, resolvedVisitorData);
+            }
+
+            log.info("External PO token provider succeeded tokenType={} videoId={} client={}",
+                tokenType, videoId, clientName);
 
             return result;
         } catch (Exception e) {
@@ -139,5 +174,22 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                 process.destroyForcibly();
             }
         }
+    }
+
+    private static String summarizeStderr(StringBuilder stderr) {
+        if (stderr.length() == 0) {
+            return "<empty>";
+        }
+
+        String summary = stderr.toString()
+            .replaceAll("(?i)(authorization|cookie|token|secret|password)(\\s*[:=]\\s*)[^\\s,;]+", "$1$2<redacted>")
+            .replaceAll("[\\r\\n\\t]+", " ")
+            .trim();
+
+        if (summary.toLowerCase(Locale.ROOT).contains("potoken")) {
+            summary = summary.replaceAll("(?i)(potoken\\s*[:=]\\s*)[^\\s,;]+", "$1<redacted>");
+        }
+
+        return summary.length() <= 500 ? summary : summary.substring(0, 500) + "...";
     }
 }

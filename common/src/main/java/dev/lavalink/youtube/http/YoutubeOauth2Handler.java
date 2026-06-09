@@ -170,7 +170,7 @@ public class YoutubeOauth2Handler {
         try (CloseableHttpResponse response = httpInterface.execute(request)) {
             HttpClientTools.assertSuccessWithContent(response, "oauth2 token fetch");
             JsonBrowser parsed = JsonBrowser.parse(response.getEntity().getContent());
-            log.debug("oauth2 token fetch response: {}", parsed.format());
+            log.debug("OAuth2 token fetch response received");
             return parsed;
         } catch (IOException e) {
             throw ExceptionTools.toRuntimeException(e);
@@ -206,7 +206,7 @@ public class YoutubeOauth2Handler {
                     }
 
                     updateTokens(response);
-                    log.info("OAUTH INTEGRATION: Token retrieved successfully. Store your refresh token as this can be reused. ({})", refreshToken);
+                    log.info("OAUTH INTEGRATION: Token retrieved successfully.");
                     enabled = true;
                     return;
                 } catch (InterruptedException | RuntimeException e) {
@@ -249,7 +249,7 @@ public class YoutubeOauth2Handler {
             JsonBrowser json = createNewAccessToken(refreshToken);
             updateTokens(json);
             log.info("YouTube access token refreshed successfully");
-            log.debug("YouTube access token is {} and refresh token is {}. Access token expires in {} seconds.", accessToken, refreshToken, json.get("expires_in").asLong(300));
+            log.debug("YouTube access token refreshed. Access token expires in {} seconds.", json.get("expires_in").asLong(300));
         }
     }
 
@@ -300,7 +300,7 @@ public class YoutubeOauth2Handler {
         refreshToken = newRefreshToken.isNull() ? refreshToken : newRefreshToken.text();
         tokenExpires = System.currentTimeMillis() + (tokenLifespan * 1000) - 60000;
 
-        log.debug("OAuth access token is {} and refresh token is {}. Access token expires in {} seconds.", accessToken, refreshToken, tokenLifespan);
+        log.debug("OAuth access token updated. Access token expires in {} seconds.", tokenLifespan);
     }
 
     public void applyToken(HttpUriRequest request) {
@@ -333,7 +333,7 @@ public class YoutubeOauth2Handler {
 
         // check again to ensure updating worked as expected.
         if (accessToken != null && tokenType != null && System.currentTimeMillis() < tokenExpires) {
-            log.debug("Using oauth authorization header with value \"{} {}\"", tokenType, accessToken);
+            log.debug("Using OAuth authorization header");
             request.setHeader("Authorization", String.format("%s %s", tokenType, accessToken));
         }
     }

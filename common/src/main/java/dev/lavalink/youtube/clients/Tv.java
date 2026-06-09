@@ -15,8 +15,8 @@ import java.io.IOException;
 public class Tv extends StreamingNonMusicClient {
     public static ClientConfig BASE_CONFIG = new ClientConfig()
         .withClientName("TVHTML5")
-        .withUserAgent("Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version")
-        .withClientField("clientVersion", "7.20250319.10.00");
+        .withUserAgent("Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)")
+        .withClientField("clientVersion", "7.20260114.12.00");
 
     protected ClientOptions options;
 
@@ -48,7 +48,7 @@ public class Tv extends StreamingNonMusicClient {
 
     @Override
     public boolean canHandleRequest(@NotNull String identifier) {
-        return false;
+        return super.canHandleRequest(identifier);
     }
 
     @Override
@@ -73,8 +73,7 @@ public class Tv extends StreamingNonMusicClient {
 
     @Override
     public AudioItem loadVideo(@NotNull YoutubeAudioSourceManager source, @NotNull HttpInterface httpInterface, @NotNull String videoId) throws CannotBeLoaded, IOException {
-        throw new FriendlyException("This client cannot load videos", Severity.COMMON,
-            new RuntimeException("TVHTML5 cannot be used to load videos"));
+        return super.loadVideo(source, httpInterface, videoId);
     }
 
     @Override

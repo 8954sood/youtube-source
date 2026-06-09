@@ -49,8 +49,7 @@ public class YoutubeAccessTokenTracker {
 
         try {
           visitorId = fetchVisitorId();
-          log.info("Updating YouTube visitor id succeeded, new one is {}, next update will be after {} seconds.",
-              visitorId,
+          log.info("Updating YouTube visitor id succeeded, next update will be after {} seconds.",
               TimeUnit.MILLISECONDS.toSeconds(VISITOR_ID_REFRESH_INTERVAL)
           );
         } catch (Exception e) {

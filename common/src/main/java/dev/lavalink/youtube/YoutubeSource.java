@@ -43,7 +43,7 @@ public class YoutubeSource {
      *                    You may specify {@code null} to unset.
      */
     public static void setPoTokenAndVisitorData(String poToken, String visitorData) {
-        log.debug("Applying pot: {} vd: {} to WEB, WEBEMBEDDED", poToken, visitorData);
+        log.debug("Applying configured poToken and visitorData to WEB, WEBEMBEDDED");
         Web.setPoTokenAndVisitorData(poToken, visitorData);
         WebEmbedded.setPoTokenAndVisitorData(poToken, visitorData);
     }

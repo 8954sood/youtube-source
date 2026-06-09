@@ -39,14 +39,22 @@ public interface CipherManager {
 
     default CachedPlayerScript getPlayerScript(@NotNull HttpInterface httpInterface) {
         synchronized (this) {
-            try (CloseableHttpResponse response = httpInterface.execute(new HttpGet("https://www.youtube.com/embed/"))) {
-                HttpClientTools.assertSuccessWithContent(response, "fetch player script (embed)");
+            try (CloseableHttpResponse response = httpInterface.execute(new HttpGet("https://www.youtube.com"))) {
+                HttpClientTools.assertSuccessWithContent(response, "fetch player script");
 
                 String responseText = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
                 String scriptUrl = DataFormatTools.extractBetween(responseText, "\"jsUrl\":\"", "\"");
 
                 if (scriptUrl == null) {
                     throw new ExceptionWithResponseBody("no jsUrl found", responseText);
+                }
+
+                if (scriptUrl.startsWith("/s/player/")) {
+                    int playerIdEnd = scriptUrl.indexOf('/', "/s/player/".length());
+
+                    if (playerIdEnd > 0) {
+                        scriptUrl = scriptUrl.substring(0, playerIdEnd) + "/player_es6.vflset/en_US/base.js";
+                    }
                 }
 
                 return new CachedPlayerScript(scriptUrl, getTimestamp(httpInterface, scriptUrl));

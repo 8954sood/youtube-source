@@ -18,6 +18,7 @@ public class ClientConfig {
     private String name;
     private String userAgent;
     private String visitorData;
+    private boolean omitVisitorData;
     private String apiKey;
     private final Map<String, Object> root;
 
@@ -25,16 +26,19 @@ public class ClientConfig {
         this.name = null;
         this.userAgent = null;
         this.visitorData = null;
+        this.omitVisitorData = false;
         this.root = new HashMap<>();
     }
 
     private ClientConfig(@NotNull Map<String, Object> context,
                          @NotNull String userAgent,
                          @NotNull String visitorData,
+                         boolean omitVisitorData,
                          @NotNull String name) {
         this.name = name;
         this.userAgent = userAgent;
         this.visitorData = visitorData;
+        this.omitVisitorData = omitVisitorData;
         this.root = context;
     }
 
@@ -50,8 +54,23 @@ public class ClientConfig {
         return this.visitorData;
     }
 
+    public boolean isVisitorDataOmitted() {
+        return omitVisitorData;
+    }
+
     public String getApiKey() {
         return this.apiKey;
+    }
+
+    public Object getClientField(@NotNull String key) {
+        Map<String, Object> context = (Map<String, Object>) root.get("context");
+
+        if (context == null) {
+            return null;
+        }
+
+        Map<String, Object> client = (Map<String, Object>) context.get("client");
+        return client != null ? client.get(key) : null;
     }
 
     public Map<String, Object> getRoot() {
@@ -59,7 +78,7 @@ public class ClientConfig {
     }
 
     public ClientConfig copy() {
-        return new ClientConfig(deepCopy(this.root), this.userAgent, this.visitorData, this.name);
+        return new ClientConfig(deepCopy(this.root), this.userAgent, this.visitorData, this.omitVisitorData, this.name);
     }
 
     /**
@@ -97,6 +116,7 @@ public class ClientConfig {
 
     public ClientConfig withVisitorData(@Nullable String visitorData) {
         this.visitorData = visitorData;
+        this.omitVisitorData = false;
 
         if (visitorData != null) {
             withClientField("visitorData", visitorData);
@@ -120,6 +140,12 @@ public class ClientConfig {
             }
         }
 
+        return this;
+    }
+
+    public ClientConfig withoutVisitorData() {
+        withVisitorData(null);
+        this.omitVisitorData = true;
         return this;
     }
 
@@ -150,6 +176,7 @@ public class ClientConfig {
     public ClientConfig withPlaybackSignatureTimestamp(@NotNull String signatureTimestamp) {
         Map<String, Object> playbackContext = putOnceAndJoin(root, "playbackContext");
         Map<String, Object> contentPlaybackContext = putOnceAndJoin(playbackContext, "contentPlaybackContext");
+        contentPlaybackContext.put("html5Preference", "HTML5_PREF_WANTS");
         contentPlaybackContext.put("signatureTimestamp", signatureTimestamp);
         return this;
     }
@@ -188,10 +215,14 @@ public class ClientConfig {
     public ClientConfig setAttributes(@NotNull HttpInterface httpInterface) {
         if (userAgent != null) {
             httpInterface.getContext().setAttribute(YoutubeHttpContextFilter.ATTRIBUTE_USER_AGENT_SPECIFIED, userAgent);
+        }
 
-            if (visitorData != null) {
-                httpInterface.getContext().setAttribute(YoutubeHttpContextFilter.ATTRIBUTE_VISITOR_DATA_SPECIFIED, visitorData);
-            }
+        if (visitorData != null) {
+            httpInterface.getContext().setAttribute(YoutubeHttpContextFilter.ATTRIBUTE_VISITOR_DATA_SPECIFIED, visitorData);
+        }
+
+        if (omitVisitorData) {
+            httpInterface.getContext().setAttribute(YoutubeHttpContextFilter.ATTRIBUTE_VISITOR_DATA_OMITTED, true);
         }
 
         return this;

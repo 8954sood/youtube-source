@@ -17,7 +17,9 @@ import java.util.stream.Collectors;
 public class MWeb extends Web {
     public static ClientConfig BASE_CONFIG = new ClientConfig()
         .withClientName("MWEB")
-        .withClientField("clientVersion", "2.20240726.11.00");
+        .withClientField("clientVersion", "2.20260115.01.00")
+        .withClientField("hl", "en")
+        .withUserAgent("Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)");
 
     public MWeb() {
         super();
@@ -31,6 +33,16 @@ public class MWeb extends Web {
     @NotNull
     public ClientConfig getBaseClientConfig(@NotNull HttpInterface httpInterface) {
         return BASE_CONFIG.copy();
+    }
+
+    @Override
+    protected String getConfigVisitorData() {
+        return BASE_CONFIG.getVisitorData();
+    }
+
+    @Override
+    public String getPlayerParams() {
+        return null;
     }
 
     @Override

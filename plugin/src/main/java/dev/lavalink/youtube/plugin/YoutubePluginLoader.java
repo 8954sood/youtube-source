@@ -177,7 +177,7 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
                 String visitorData = pot.getVisitorData();
 
                 if (token != null && visitorData != null) {
-                    log.debug("Applying poToken and visitorData to WEB & WEBEMBEDDED client (token: {}, vd: {})", token, visitorData);
+                    log.debug("Applying configured poToken and visitorData to WEB & WEBEMBEDDED client");
                     YoutubeSource.setPoTokenAndVisitorData(token, visitorData);
                 } else if (token != null || visitorData != null) {
                     log.warn("Both \"youtube.pot.token\" and \"youtube.pot.visitorData\" must be specified and valid for pot to apply.");
@@ -220,7 +220,7 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
             YoutubeOauthConfig oauthConfig = youtubeConfig.getOauth();
 
             if (oauthConfig.getEnabled()) {
-                log.debug("Configuring youtube oauth integration with token: \"{}\" skipInitialization: {}", oauthConfig.getRefreshToken(), oauthConfig.getSkipInitialization());
+                log.debug("Configuring youtube oauth integration, skipInitialization: {}", oauthConfig.getSkipInitialization());
                 source.useOauth2(oauthConfig.getRefreshToken(), oauthConfig.getSkipInitialization());
             }
         }
@@ -257,6 +257,7 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
             PoTokenCache cache = new PoTokenCache(config.getCacheTtlSeconds());
             ExternalPoTokenProvider provider = new ExternalPoTokenProvider(command, config.getTimeoutMs(), cache);
             YoutubeSource.setPoTokenProvider(provider);
+            log.info("External PO token provider enabled");
             log.info("External PO token provider registered: command='{}' timeoutMs={} cacheTtlSeconds={}",
                 command, config.getTimeoutMs(), config.getCacheTtlSeconds());
         } catch (Exception e) {

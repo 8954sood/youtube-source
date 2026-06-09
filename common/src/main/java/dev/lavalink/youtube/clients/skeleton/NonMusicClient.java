@@ -19,6 +19,7 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
@@ -41,6 +42,7 @@ import java.util.stream.Collectors;
 
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.COMMON;
 import static com.sedmelluq.discord.lavaplayer.tools.FriendlyException.Severity.SUSPICIOUS;
+import static dev.lavalink.youtube.http.YoutubeHttpContextFilter.HEADER_VISITOR_DATA_OMITTED;
 
 /**
  * The base class for a client that is used for everything except music.youtube.com.
@@ -118,10 +120,12 @@ public abstract class NonMusicClient implements Client {
         CipherManager cipherManager = source.getCipherManager();
 
         ClientConfig config = getBaseClientConfig(httpInterface);
+        PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
 
         // Skip embed workaround for OAuth-supporting clients to avoid EMBEDDER_IDENTITY_DENIED errors.
-        // OAuth authentication should be sufficient without pretending to be an embedded player.
-        if (!supportsOAuth() && (status == null || status != PlayabilityStatus.NON_EMBEDDABLE)) {
+        // OAuth or an external player PO token should be sufficient without pretending to be an embedded player.
+        if (!supportsOAuth() && poTokenProvider == null
+            && (status == null || status != PlayabilityStatus.NON_EMBEDDABLE)) {
             config.withClientField("clientScreen", "EMBED")
                 .withThirdPartyEmbedUrl("https://google.com");
         }
@@ -134,21 +138,24 @@ public abstract class NonMusicClient implements Client {
         // "player" token for this videoId/client and inject it onto this (deep-copied) per-request
         // config only. Never mutates the shared BASE_CONFIG, never logs the token value, and any
         // failure falls through to the existing static-token behaviour.
-        PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
-
-        if (poTokenProvider != null) {
+        if (poTokenProvider != null && !supportsOAuth()) {
             try {
                 PoTokenResult result = poTokenProvider.fetchToken(videoId, getIdentifier(),
                     config.getVisitorData(), PoTokenProvider.TOKEN_TYPE_PLAYER);
 
                 if (result != null && result.poToken != null) {
-                    config.withVisitorData(result.visitorData);
+                    if (result.visitorData != null) {
+                        config.withVisitorData(result.visitorData);
+                    } else {
+                        config.withoutVisitorData();
+                    }
 
                     Map<String, Object> serviceIntegrityDimensions = new HashMap<>();
                     serviceIntegrityDimensions.put("poToken", result.poToken);
                     config.getRoot().put("serviceIntegrityDimensions", serviceIntegrityDimensions);
 
-                    log.debug("Applied external player poToken for videoId={} client={}", videoId, getIdentifier());
+                    log.info("Applied player PO token to Innertube player request videoId={} client={}",
+                        videoId, getIdentifier());
                 }
             } catch (Exception e) {
                 log.warn("External poToken provider failed (player) for videoId={} client={}, falling back.",
@@ -181,7 +188,24 @@ public abstract class NonMusicClient implements Client {
         }
 
         HttpPost request = new HttpPost(PLAYER_URL);
-        request.setEntity(new StringEntity(payload, "UTF-8"));
+        request.setEntity(new StringEntity(payload, ContentType.APPLICATION_JSON));
+        request.setHeader("Content-Type", ContentType.APPLICATION_JSON.getMimeType());
+        request.setHeader("Origin", "https://www.youtube.com");
+
+        if (config.isVisitorDataOmitted()) {
+            request.setHeader(HEADER_VISITOR_DATA_OMITTED, "true");
+        }
+
+        Object clientVersion = config.getClientField("clientVersion");
+        String clientHeader = getClientHeader();
+
+        if (clientHeader != null) {
+            request.setHeader("X-YouTube-Client-Name", clientHeader);
+        }
+
+        if (clientVersion != null) {
+            request.setHeader("X-YouTube-Client-Version", clientVersion.toString());
+        }
 
         JsonBrowser json = loadJsonResponse(httpInterface, request, "player api response");
         JsonBrowser playabilityJson = json.get("playabilityStatus");
@@ -222,6 +246,24 @@ public abstract class NonMusicClient implements Client {
         }
 
         return json;
+    }
+
+    @Nullable
+    private String getClientHeader() {
+        switch (getIdentifier()) {
+            case "WEB":
+                return "1";
+            case "MWEB":
+                return "2";
+            case "ANDROID":
+                return "3";
+            case "IOS":
+                return "5";
+            case "TVHTML5":
+                return "7";
+            default:
+                return null;
+        }
     }
 
     /**
@@ -464,8 +506,19 @@ public abstract class NonMusicClient implements Client {
         JsonBrowser playabilityStatus = json.get("playabilityStatus");
         JsonBrowser videoDetails = json.get("videoDetails");
 
-        String title = videoDetails.get("title").text();
-        String author = videoDetails.get("author").text();
+        JsonBrowser microformat = json.get("microformat").get("playerMicroformatRenderer");
+        String title = DataFormatTools.defaultOnNull(
+            videoDetails.get("title").text(),
+            microformat.get("title").get("simpleText").text()
+        );
+        String author = DataFormatTools.defaultOnNull(
+            videoDetails.get("author").text(),
+            microformat.get("ownerChannelName").text()
+        );
+
+        if (title == null) {
+            title = "Unknown title";
+        }
 
         if (author == null) {
             log.debug("Author field is null, client: {}, json: {}", getIdentifier(), json.format());
