@@ -8,9 +8,12 @@ import com.sedmelluq.discord.lavaplayer.track.*;
 import dev.lavalink.youtube.CannotBeLoaded;
 import dev.lavalink.youtube.OptionDisabledException;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
+import dev.lavalink.youtube.YoutubeSource;
 import dev.lavalink.youtube.cipher.CipherManager;
 import dev.lavalink.youtube.cipher.CipherManager.CachedPlayerScript;
 import dev.lavalink.youtube.clients.ClientConfig;
+import dev.lavalink.youtube.pot.PoTokenProvider;
+import dev.lavalink.youtube.pot.PoTokenResult;
 import dev.lavalink.youtube.track.TemporalInfo;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -28,7 +31,9 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -124,6 +129,32 @@ public abstract class NonMusicClient implements Client {
         config.withRootField("videoId", videoId)
             .withRootField("racyCheckOk", true)
             .withRootField("contentCheckOk", true);
+
+        // Per-video PO Token hook: when an external provider is registered, ask it for a
+        // "player" token for this videoId/client and inject it onto this (deep-copied) per-request
+        // config only. Never mutates the shared BASE_CONFIG, never logs the token value, and any
+        // failure falls through to the existing static-token behaviour.
+        PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
+
+        if (poTokenProvider != null) {
+            try {
+                PoTokenResult result = poTokenProvider.fetchToken(videoId, getIdentifier(),
+                    config.getVisitorData(), PoTokenProvider.TOKEN_TYPE_PLAYER);
+
+                if (result != null && result.poToken != null) {
+                    config.withVisitorData(result.visitorData);
+
+                    Map<String, Object> serviceIntegrityDimensions = new HashMap<>();
+                    serviceIntegrityDimensions.put("poToken", result.poToken);
+                    config.getRoot().put("serviceIntegrityDimensions", serviceIntegrityDimensions);
+
+                    log.debug("Applied external player poToken for videoId={} client={}", videoId, getIdentifier());
+                }
+            } catch (Exception e) {
+                log.warn("External poToken provider failed (player) for videoId={} client={}, falling back.",
+                    videoId, getIdentifier(), e);
+            }
+        }
 
         String params = getPlayerParams();
 

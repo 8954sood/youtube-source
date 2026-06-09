@@ -2,6 +2,8 @@ package dev.lavalink.youtube;
 
 import dev.lavalink.youtube.clients.Web;
 import dev.lavalink.youtube.clients.WebEmbedded;
+import dev.lavalink.youtube.pot.PoTokenProvider;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,6 +14,8 @@ public class YoutubeSource {
     private static final Logger log = LoggerFactory.getLogger(YoutubeSource.class);
 
     public static String VERSION = "Unknown";
+
+    private static volatile PoTokenProvider poTokenProvider = null;
 
     static {
         try (InputStream versionStream = YoutubeSource.class.getResourceAsStream("/yts-version.txt")) {
@@ -42,5 +46,22 @@ public class YoutubeSource {
         log.debug("Applying pot: {} vd: {} to WEB, WEBEMBEDDED", poToken, visitorData);
         Web.setPoTokenAndVisitorData(poToken, visitorData);
         WebEmbedded.setPoTokenAndVisitorData(poToken, visitorData);
+    }
+
+    /**
+     * Registers an external {@link PoTokenProvider} consulted on a per-video basis at the
+     * player request and GVS stream URL injection points. Pass {@code null} to unset, which
+     * restores the static {@link #setPoTokenAndVisitorData(String, String)} behaviour.
+     */
+    public static void setPoTokenProvider(@Nullable PoTokenProvider provider) {
+        poTokenProvider = provider;
+    }
+
+    /**
+     * @return the registered {@link PoTokenProvider}, or {@code null} if none is set.
+     */
+    @Nullable
+    public static PoTokenProvider getPoTokenProvider() {
+        return poTokenProvider;
     }
 }

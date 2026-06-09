@@ -59,7 +59,29 @@ public class ClientConfig {
     }
 
     public ClientConfig copy() {
-        return new ClientConfig(new HashMap<>(this.root), this.userAgent, this.visitorData, this.name);
+        return new ClientConfig(deepCopy(this.root), this.userAgent, this.visitorData, this.name);
+    }
+
+    /**
+     * Recursively deep-copies nested {@link Map} values so that mutating a copied config
+     * (e.g. per-request in {@code loadTrackInfoFromInnertube}) never leaks into the shared
+     * static {@code BASE_CONFIG}. Non-map values are kept by reference, which is safe because
+     * they are treated as immutable scalars throughout this codebase.
+     */
+    private static Map<String, Object> deepCopy(@NotNull Map<String, Object> source) {
+        Map<String, Object> result = new HashMap<>(source.size());
+
+        for (Map.Entry<String, Object> entry : source.entrySet()) {
+            Object value = entry.getValue();
+
+            if (value instanceof Map) {
+                result.put(entry.getKey(), deepCopy((Map<String, Object>) value));
+            } else {
+                result.put(entry.getKey(), value);
+            }
+        }
+
+        return result;
     }
 
     public ClientConfig withClientName(@NotNull String name) {

@@ -7,7 +7,10 @@ import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
+import dev.lavalink.youtube.YoutubeSource;
 import dev.lavalink.youtube.clients.skeleton.StreamingNonMusicClient;
+import dev.lavalink.youtube.pot.PoTokenProvider;
+import dev.lavalink.youtube.pot.PoTokenResult;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.utils.URIBuilder;
@@ -154,6 +157,49 @@ public class Web extends StreamingNonMusicClient {
             log.debug("Failed to apply 'pot' parameter.", e);
             return resolvedPlaybackUri;
         }
+    }
+
+    /**
+     * The visitorData currently configured for this client, used as a seed/hint passed to the
+     * external PO Token provider. Overridden by subclasses that maintain their own BASE_CONFIG,
+     * since the static field is hidden (not overridden) per class.
+     */
+    @Nullable
+    protected String getConfigVisitorData() {
+        return BASE_CONFIG.getVisitorData();
+    }
+
+    @Override
+    @NotNull
+    public URI transformPlaybackUri(@NotNull URI originalUri, @NotNull URI resolvedPlaybackUri, @NotNull String videoId) {
+        PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
+
+        if (poTokenProvider != null) {
+            try {
+                PoTokenResult result = poTokenProvider.fetchToken(videoId, getIdentifier(),
+                    getConfigVisitorData(), PoTokenProvider.TOKEN_TYPE_GVS);
+
+                if (result != null && result.poToken != null) {
+                    log.debug("Applying external GVS 'pot' parameter on playback URI for videoId={} client={}",
+                        videoId, getIdentifier());
+                    URIBuilder builder = new URIBuilder(resolvedPlaybackUri);
+                    builder.addParameter("pot", result.poToken);
+
+                    try {
+                        return builder.build();
+                    } catch (URISyntaxException e) {
+                        log.debug("Failed to apply external GVS 'pot' parameter.", e);
+                        return resolvedPlaybackUri;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("External poToken provider failed (gvs) for videoId={} client={}, falling back.",
+                    videoId, getIdentifier(), e);
+            }
+        }
+
+        // Fall back to the static-token behaviour.
+        return transformPlaybackUri(originalUri, resolvedPlaybackUri);
     }
 
     @Override

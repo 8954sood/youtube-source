@@ -118,7 +118,7 @@ public class YoutubeRestHandler {
             URI transformed = selectedFormat.getUrl();
             if (client.requirePlayerScript()) {
                 URI resolved = source.getCipherManager().resolveFormatUrl(httpInterface, formats.getPlayerScriptUrl(), selectedFormat);
-                transformed = client.transformPlaybackUri(selectedFormat.getUrl(), resolved);
+                transformed = client.transformPlaybackUri(selectedFormat.getUrl(), resolved, videoId);
             }
 
             YoutubePersistentHttpStream httpStream = new YoutubePersistentHttpStream(httpInterface, transformed, selectedFormat.getContentLength());
@@ -170,7 +170,12 @@ public class YoutubeRestHandler {
         }
 
         if (lastException != null) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "This video cannot be loaded", lastException);
+            // NOTE: the (HttpStatus, String, Throwable) ResponseStatusException constructor was removed in
+            // Spring 6.1 (Lavalink 4.2.x), so passing the cause directly throws NoSuchMethodError and masks
+            // the real failure. Log the cause and surface its message in the response instead.
+            log.error("All clients failed to load formats for {}", videoId, lastException);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                "This video cannot be loaded: " + lastException.getMessage());
         }
 
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not find formats for the requested videoId.");

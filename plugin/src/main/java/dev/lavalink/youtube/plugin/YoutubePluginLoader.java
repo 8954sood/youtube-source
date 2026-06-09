@@ -12,12 +12,16 @@ import dev.lavalink.youtube.YoutubeSource;
 import dev.lavalink.youtube.YoutubeSourceOptions;
 import dev.lavalink.youtube.clients.ClientOptions;
 import dev.lavalink.youtube.clients.skeleton.Client;
+import dev.lavalink.youtube.plugin.pot.ExternalProviderConfig;
+import dev.lavalink.youtube.pot.ExternalPoTokenProvider;
+import dev.lavalink.youtube.pot.PoTokenCache;
 import lavalink.server.config.RateLimitConfig;
 import lavalink.server.config.ServerConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -178,6 +182,8 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
                 } else if (token != null || visitorData != null) {
                     log.warn("Both \"youtube.pot.token\" and \"youtube.pot.visitorData\" must be specified and valid for pot to apply.");
                 }
+
+                registerExternalPoTokenProvider(pot.getExternalProvider());
             }
 
             if (cipherConfig != null && cipherConfig.getUrl() != null) {
@@ -222,5 +228,39 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
         log.info("YouTube source initialised with clients: {} ", Arrays.stream(source.getClients()).map(Client::getIdentifier).collect(Collectors.joining(", ")));
         audioPlayerManager.registerSourceManager(source);
         return audioPlayerManager;
+    }
+
+    /**
+     * Registers the external PO Token provider if configured and enabled. Any problem here is
+     * logged and swallowed — Lavalink boot must never fail because of provider configuration.
+     */
+    private void registerExternalPoTokenProvider(ExternalProviderConfig config) {
+        if (config == null || !config.isEnabled()) {
+            return;
+        }
+
+        try {
+            String command = config.getCommand();
+
+            if (command == null) {
+                log.warn("\"youtube.pot.externalProvider.enabled\" is true but no \"command\" was specified. Provider disabled.");
+                return;
+            }
+
+            File executable = new File(command);
+
+            if (!executable.exists() || !executable.canExecute()) {
+                log.warn("External PO token provider command '{}' does not exist or is not executable. Provider disabled.", command);
+                return;
+            }
+
+            PoTokenCache cache = new PoTokenCache(config.getCacheTtlSeconds());
+            ExternalPoTokenProvider provider = new ExternalPoTokenProvider(command, config.getTimeoutMs(), cache);
+            YoutubeSource.setPoTokenProvider(provider);
+            log.info("External PO token provider registered: command='{}' timeoutMs={} cacheTtlSeconds={}",
+                command, config.getTimeoutMs(), config.getCacheTtlSeconds());
+        } catch (Exception e) {
+            log.error("Failed to initialise external PO token provider. Continuing without it.", e);
+        }
     }
 }

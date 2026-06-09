@@ -46,6 +46,12 @@ public class WebEmbedded extends Web {
     }
 
     @Override
+    @Nullable
+    protected String getConfigVisitorData() {
+        return BASE_CONFIG.getVisitorData();
+    }
+
+    @Override
     @NotNull
     public URI transformPlaybackUri(@NotNull URI originalUri, @NotNull URI resolvedPlaybackUri) {
         if (poToken == null) {

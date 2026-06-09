@@ -152,6 +152,23 @@ public interface Client {
     }
 
     /**
+     * Variant of {@link #transformPlaybackUri(URI, URI)} that additionally receives the videoId,
+     * allowing clients to request a per-video GVS PO Token from a registered provider.
+     * The default implementation simply delegates to the two-argument overload, preserving
+     * existing behaviour for clients that do not need the videoId.
+     * @param originalUri The original stream URI, unmodified, as received from YouTube.
+     * @param resolvedPlaybackUri The playback URI, already transformed by the SignatureCipherManager.
+     * @param videoId The id of the video being played.
+     * @return The new playback URI.
+     */
+    @NotNull
+    default URI transformPlaybackUri(@NotNull URI originalUri,
+                                     @NotNull URI resolvedPlaybackUri,
+                                     @NotNull String videoId) {
+        return transformPlaybackUri(originalUri, resolvedPlaybackUri);
+    }
+
+    /**
      * Builds an audio track with the given parameters.
      * Hint: You can use {@link YoutubeAudioSourceManager#buildAudioTrack(AudioTrackInfo)} to
      * build a track with the given AudioTrackInfo.
