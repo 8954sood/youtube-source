@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -149,5 +150,42 @@ class ExternalPoTokenProviderTest {
         PoTokenResult result = provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
         assertNotNull(result);
         assertEquals(0L, result.expiresAtEpochMs);
+    }
+
+    @Test
+    void passesSourceAddressAsSeparateArgument() throws IOException {
+        Path arguments = tempDir.resolve("arguments.txt");
+        String cmd = writeScript("arguments.sh",
+            "printf '%s\\n' \"$@\" > '" + arguments.toAbsolutePath() + "'\n" +
+            "echo '{\"poToken\":\"tok\",\"visitorData\":\"vd\"}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(cmd, 5000, new PoTokenCache(300));
+
+        PoTokenResult result = provider.fetchToken(
+            "vid;touch /tmp/not-run", "MWEB", "visitor data",
+            PoTokenProvider.TOKEN_TYPE_GVS, "2001:db8::1234");
+
+        assertNotNull(result);
+        assertEquals(Arrays.asList(
+            "vid;touch /tmp/not-run",
+            "MWEB",
+            "gvs",
+            "visitor data",
+            "2001:db8::1234"
+        ), Files.readAllLines(arguments));
+    }
+
+    @Test
+    void disabledTokenTypeDoesNotInvokeProvider() throws IOException {
+        Path counter = tempDir.resolve("count.txt");
+        String cmd = writeScript("disabled.sh",
+            "echo run >> '" + counter.toAbsolutePath() + "'\n" +
+            "echo '{\"poToken\":\"tok\"}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(
+            cmd, 5000, new PoTokenCache(300), false, true);
+
+        assertNull(provider.fetchToken("vid", "MWEB", null, PoTokenProvider.TOKEN_TYPE_PLAYER));
+        org.junit.jupiter.api.Assertions.assertFalse(Files.exists(counter));
+        assertNotNull(provider.fetchToken("vid", "MWEB", null, PoTokenProvider.TOKEN_TYPE_GVS));
+        assertEquals(1, Files.readAllLines(counter).size());
     }
 }

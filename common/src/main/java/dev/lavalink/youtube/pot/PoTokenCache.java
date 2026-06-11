@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Thread-safe cache for {@link PoTokenResult} entries, keyed by
- * {@code videoId + clientName + tokenType + visitorData}.
+ * {@code videoId + clientName + tokenType + visitorData + sourceAddress}.
  *
  * <p>An entry expires at {@link PoTokenResult#expiresAtEpochMs} when that is greater than zero,
  * otherwise at insertion time plus the configured TTL. Failed lookups are never cached — only
@@ -26,7 +26,16 @@ public class PoTokenCache {
                              @NotNull String clientName,
                              @NotNull String tokenType,
                              @Nullable String visitorData) {
-        String key = makeKey(videoId, clientName, tokenType, visitorData);
+        return get(videoId, clientName, tokenType, visitorData, null);
+    }
+
+    @Nullable
+    public PoTokenResult get(@NotNull String videoId,
+                             @NotNull String clientName,
+                             @NotNull String tokenType,
+                             @Nullable String visitorData,
+                             @Nullable String sourceAddress) {
+        String key = makeKey(videoId, clientName, tokenType, visitorData, sourceAddress);
         CachedEntry entry = cache.get(key);
 
         if (entry == null) {
@@ -46,14 +55,30 @@ public class PoTokenCache {
                     @NotNull String tokenType,
                     @Nullable String visitorData,
                     @NotNull PoTokenResult result) {
+        put(videoId, clientName, tokenType, visitorData, null, result);
+    }
+
+    public void put(@NotNull String videoId,
+                    @NotNull String clientName,
+                    @NotNull String tokenType,
+                    @Nullable String visitorData,
+                    @Nullable String sourceAddress,
+                    @NotNull PoTokenResult result) {
         long expiresAtMs = result.expiresAtEpochMs > 0
             ? result.expiresAtEpochMs
             : System.currentTimeMillis() + cacheTtlMs;
-        cache.put(makeKey(videoId, clientName, tokenType, visitorData), new CachedEntry(result, expiresAtMs));
+        cache.put(makeKey(videoId, clientName, tokenType, visitorData, sourceAddress),
+            new CachedEntry(result, expiresAtMs));
     }
 
-    private static String makeKey(String videoId, String clientName, String tokenType, String visitorData) {
-        return videoId + "|" + clientName + "|" + tokenType + "|" + (visitorData != null ? visitorData : "");
+    private static String makeKey(String videoId,
+                                  String clientName,
+                                  String tokenType,
+                                  String visitorData,
+                                  String sourceAddress) {
+        return videoId + "|" + clientName + "|" + tokenType + "|"
+            + (visitorData != null ? visitorData : "") + "|"
+            + (sourceAddress != null ? sourceAddress : "");
     }
 
     private static final class CachedEntry {

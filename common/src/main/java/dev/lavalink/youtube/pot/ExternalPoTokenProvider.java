@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>The command is run with a fixed argument list (never via a shell), so the arguments are
  * not subject to shell interpretation or injection:
- * <pre>{@code <command> <videoId> <clientName> <tokenType> <visitorData>}</pre>
+ * <pre>{@code <command> <videoId> <clientName> <tokenType> <visitorData> <sourceAddress>}</pre>
  * The process must print a single JSON object to stdout:
  * <pre>{@code {"poToken":"...","visitorData":"...","expiresAtEpochMs":1780000000000}}</pre>
  *
@@ -38,12 +38,24 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
     private final String command;
     private final long timeoutMs;
     private final PoTokenCache cache;
+    private final boolean playerTokenEnabled;
+    private final boolean gvsTokenEnabled;
     private final ConcurrentMap<String, String> visitorDataByVideoAndClient = new ConcurrentHashMap<>();
 
     public ExternalPoTokenProvider(@NotNull String command, long timeoutMs, @NotNull PoTokenCache cache) {
+        this(command, timeoutMs, cache, true, true);
+    }
+
+    public ExternalPoTokenProvider(@NotNull String command,
+                                   long timeoutMs,
+                                   @NotNull PoTokenCache cache,
+                                   boolean playerTokenEnabled,
+                                   boolean gvsTokenEnabled) {
         this.command = command;
         this.timeoutMs = timeoutMs;
         this.cache = cache;
+        this.playerTokenEnabled = playerTokenEnabled;
+        this.gvsTokenEnabled = gvsTokenEnabled;
     }
 
     @Override
@@ -52,14 +64,29 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                                     @NotNull String clientName,
                                     @Nullable String visitorData,
                                     @NotNull String tokenType) {
-        String sessionKey = videoId + "|" + clientName;
+        return fetchToken(videoId, clientName, visitorData, tokenType, null);
+    }
+
+    @Override
+    @Nullable
+    public PoTokenResult fetchToken(@NotNull String videoId,
+                                    @NotNull String clientName,
+                                    @Nullable String visitorData,
+                                    @NotNull String tokenType,
+                                    @Nullable String sourceAddress) {
+        if ((TOKEN_TYPE_PLAYER.equals(tokenType) && !playerTokenEnabled)
+            || (TOKEN_TYPE_GVS.equals(tokenType) && !gvsTokenEnabled)) {
+            return null;
+        }
+
+        String sessionKey = videoId + "|" + clientName + "|" + (sourceAddress != null ? sourceAddress : "");
         String effectiveVisitorData = visitorData;
 
         if (effectiveVisitorData == null && tokenType.equals(TOKEN_TYPE_GVS)) {
             effectiveVisitorData = visitorDataByVideoAndClient.get(sessionKey);
         }
 
-        PoTokenResult cached = cache.get(videoId, clientName, tokenType, effectiveVisitorData);
+        PoTokenResult cached = cache.get(videoId, clientName, tokenType, effectiveVisitorData, sourceAddress);
         String tokenLabel = tokenType.equals(TOKEN_TYPE_PLAYER) ? "Player" : "GVS";
 
         if (cached != null) {
@@ -87,6 +114,7 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
             args.add(clientName);
             args.add(tokenType);
             args.add(effectiveVisitorData != null ? effectiveVisitorData : "");
+            args.add(sourceAddress != null ? sourceAddress : "");
 
             ProcessBuilder builder = new ProcessBuilder(args);
 
@@ -155,7 +183,7 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
             long expiresAtEpochMs = json.getLong("expiresAtEpochMs", 0L);
 
             PoTokenResult result = new PoTokenResult(poToken, resolvedVisitorData, expiresAtEpochMs);
-            cache.put(videoId, clientName, tokenType, effectiveVisitorData, result);
+            cache.put(videoId, clientName, tokenType, effectiveVisitorData, sourceAddress, result);
 
             if (tokenType.equals(TOKEN_TYPE_PLAYER) && resolvedVisitorData != null) {
                 visitorDataByVideoAndClient.put(sessionKey, resolvedVisitorData);

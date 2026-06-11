@@ -46,6 +46,16 @@ class PoTokenCacheTest {
     }
 
     @Test
+    void sourceAddressIsPartOfCacheKey() {
+        PoTokenCache cache = new PoTokenCache(300);
+        cache.put("vid", "MWEB", PoTokenProvider.TOKEN_TYPE_GVS, "vd", "2001:db8::1",
+            new PoTokenResult("t", "vd", 0));
+
+        assertNotNull(cache.get("vid", "MWEB", PoTokenProvider.TOKEN_TYPE_GVS, "vd", "2001:db8::1"));
+        assertNull(cache.get("vid", "MWEB", PoTokenProvider.TOKEN_TYPE_GVS, "vd", "2001:db8::2"));
+    }
+
+    @Test
     void nullVisitorDataIsAValidKey() {
         PoTokenCache cache = new PoTokenCache(300);
         cache.put("vid", "WEB", PoTokenProvider.TOKEN_TYPE_GVS, null, new PoTokenResult("t", null, 0));

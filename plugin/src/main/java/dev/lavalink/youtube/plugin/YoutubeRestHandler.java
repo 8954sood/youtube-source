@@ -117,9 +117,9 @@ public class YoutubeRestHandler {
 
             URI transformed = selectedFormat.getUrl();
             if (client.requirePlayerScript()) {
-                URI resolved = source.getCipherManager().resolveFormatUrl(httpInterface, formats.getPlayerScriptUrl(), selectedFormat);
-                transformed = client.transformPlaybackUri(selectedFormat.getUrl(), resolved, videoId);
+                transformed = source.getCipherManager().resolveFormatUrl(httpInterface, formats.getPlayerScriptUrl(), selectedFormat);
             }
+            transformed = client.transformPlaybackUri(httpInterface, selectedFormat.getUrl(), transformed, videoId);
 
             YoutubePersistentHttpStream httpStream = new YoutubePersistentHttpStream(httpInterface, transformed, selectedFormat.getContentLength());
 
@@ -166,7 +166,8 @@ public class YoutubeRestHandler {
         IOUtils.closeQuietly(httpInterface);
 
         if (foundFormats) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No formats found with the requested itag.");
+            log.warn("Formats were returned for {}, but none of their playback URLs could be opened.", videoId);
+            throw new IllegalStateException("Formats were returned, but none of their playback URLs could be opened.");
         }
 
         if (lastException != null) {
@@ -177,7 +178,7 @@ public class YoutubeRestHandler {
             throw new IllegalStateException("This video cannot be loaded: " + lastException.getMessage(), lastException);
         }
 
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not find formats for the requested videoId.");
+        throw new IllegalArgumentException("Could not find formats for the requested videoId.");
     }
 
     @GetMapping("/youtube")

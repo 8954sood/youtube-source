@@ -302,6 +302,46 @@ plugins:
       visitorData: "paste your visitor_data here"
 ```
 
+### External per-video provider
+
+YouTube may bind GVS PO Tokens to a video ID, visitor session, client, and source IP. A static token
+can therefore be insufficient. The plugin can invoke an external provider for both the Innertube
+player request and the final Google Video Server URL:
+
+```yaml
+plugins:
+  youtube:
+    pot:
+      externalProvider:
+        enabled: true
+        command: "/opt/youtube-pot-provider/get-token"
+        timeoutMs: 40000
+        cacheTtlSeconds: 300
+        playerTokenEnabled: false
+        gvsTokenEnabled: true
+```
+
+The executable is invoked directly with `ProcessBuilder`, without a shell:
+
+```text
+<command> <videoId> <clientName> <tokenType> <visitorData> <sourceAddress>
+```
+
+`tokenType` is `player` or `gvs`. `sourceAddress` is the local address selected by the route
+planner, when available. The provider should bind its own attestation request to that address and
+write one JSON object to stdout:
+
+```json
+{"poToken":"...","visitorData":"...","expiresAtEpochMs":1780000000000}
+```
+
+Provider failures, timeouts, invalid output, and non-zero exits fall back to the existing client
+behavior. Token and visitor data values are not logged.
+
+For the OAuth-authenticated `TVHTML5` client, the currently verified combination is a video-bound
+player token with `playerTokenEnabled: true` and `gvsTokenEnabled: false`. Other clients may require
+GVS tokens instead, so keep the two token types independently configurable.
+
 ## Using a remote cipher server
 
 It becomes harder and harder to keep up with YouTube's cipher changes, as they become more frequent and complex.

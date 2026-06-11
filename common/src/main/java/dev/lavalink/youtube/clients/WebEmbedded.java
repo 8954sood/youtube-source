@@ -19,7 +19,7 @@ public class WebEmbedded extends Web {
 
     public static ClientConfig BASE_CONFIG = new ClientConfig()
         .withClientName("WEB_EMBEDDED_PLAYER")
-        .withClientField("clientVersion", "1.20250401.01.00")
+        .withClientField("clientVersion", "1.20260115.01.00")
         .withUserField("lockedSafetyMode", false);
 
     public WebEmbedded() {
@@ -49,6 +49,11 @@ public class WebEmbedded extends Web {
     @Nullable
     protected String getConfigVisitorData() {
         return BASE_CONFIG.getVisitorData();
+    }
+
+    @Override
+    protected boolean useExternalGvsPoToken() {
+        return false;
     }
 
     @Override

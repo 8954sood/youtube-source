@@ -169,15 +169,23 @@ public class Web extends StreamingNonMusicClient {
         return BASE_CONFIG.getVisitorData();
     }
 
+    protected boolean useExternalGvsPoToken() {
+        return true;
+    }
+
     @Override
     @NotNull
-    public URI transformPlaybackUri(@NotNull URI originalUri, @NotNull URI resolvedPlaybackUri, @NotNull String videoId) {
+    public URI transformPlaybackUri(@NotNull HttpInterface httpInterface,
+                                    @NotNull URI originalUri,
+                                    @NotNull URI resolvedPlaybackUri,
+                                    @NotNull String videoId) {
         PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
 
-        if (poTokenProvider != null) {
+        if (poTokenProvider != null && useExternalGvsPoToken()) {
             try {
                 PoTokenResult result = poTokenProvider.fetchToken(videoId, getIdentifier(),
-                    getConfigVisitorData(), PoTokenProvider.TOKEN_TYPE_GVS);
+                    getConfigVisitorData(), PoTokenProvider.TOKEN_TYPE_GVS,
+                    getRoutePlannerAddress(httpInterface));
 
                 if (result != null && result.poToken != null) {
                     log.info("Applied GVS PO token to format URL/request videoId={} client={}",

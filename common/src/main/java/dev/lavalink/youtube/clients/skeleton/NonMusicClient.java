@@ -122,14 +122,6 @@ public abstract class NonMusicClient implements Client {
         ClientConfig config = getBaseClientConfig(httpInterface);
         PoTokenProvider poTokenProvider = YoutubeSource.getPoTokenProvider();
 
-        // Skip embed workaround for OAuth-supporting clients to avoid EMBEDDER_IDENTITY_DENIED errors.
-        // OAuth or an external player PO token should be sufficient without pretending to be an embedded player.
-        if (!supportsOAuth() && poTokenProvider == null
-            && (status == null || status != PlayabilityStatus.NON_EMBEDDABLE)) {
-            config.withClientField("clientScreen", "EMBED")
-                .withThirdPartyEmbedUrl("https://google.com");
-        }
-
         config.withRootField("videoId", videoId)
             .withRootField("racyCheckOk", true)
             .withRootField("contentCheckOk", true);
@@ -138,21 +130,23 @@ public abstract class NonMusicClient implements Client {
         // "player" token for this videoId/client and inject it onto this (deep-copied) per-request
         // config only. Never mutates the shared BASE_CONFIG, never logs the token value, and any
         // failure falls through to the existing static-token behaviour.
-        if (poTokenProvider != null && !supportsOAuth()) {
+        boolean playerTokenApplied = false;
+
+        if (poTokenProvider != null && supportsExternalPlayerPoToken()) {
             try {
                 PoTokenResult result = poTokenProvider.fetchToken(videoId, getIdentifier(),
-                    config.getVisitorData(), PoTokenProvider.TOKEN_TYPE_PLAYER);
+                    config.getVisitorData(), PoTokenProvider.TOKEN_TYPE_PLAYER,
+                    getRoutePlannerAddress(httpInterface));
 
                 if (result != null && result.poToken != null) {
                     if (result.visitorData != null) {
                         config.withVisitorData(result.visitorData);
-                    } else {
-                        config.withoutVisitorData();
                     }
 
                     Map<String, Object> serviceIntegrityDimensions = new HashMap<>();
                     serviceIntegrityDimensions.put("poToken", result.poToken);
                     config.getRoot().put("serviceIntegrityDimensions", serviceIntegrityDimensions);
+                    playerTokenApplied = true;
 
                     log.info("Applied player PO token to Innertube player request videoId={} client={}",
                         videoId, getIdentifier());
@@ -161,6 +155,15 @@ public abstract class NonMusicClient implements Client {
                 log.warn("External poToken provider failed (player) for videoId={} client={}, falling back.",
                     videoId, getIdentifier(), e);
             }
+        }
+
+        // Preserve the original non-OAuth fallback when no player token was applied.
+        if (!supportsOAuth() && !playerTokenApplied
+            && (status == null || status != PlayabilityStatus.NON_EMBEDDABLE)) {
+            config.withClientField("clientScreen", "EMBED")
+                .withThirdPartyEmbedUrl(isEmbedded()
+                    ? "https://www.youtube.com/embed/" + videoId
+                    : "https://google.com");
         }
 
         String params = getPlayerParams();
@@ -189,8 +192,6 @@ public abstract class NonMusicClient implements Client {
 
         HttpPost request = new HttpPost(PLAYER_URL);
         request.setEntity(new StringEntity(payload, ContentType.APPLICATION_JSON));
-        request.setHeader("Content-Type", ContentType.APPLICATION_JSON.getMimeType());
-        request.setHeader("Origin", "https://www.youtube.com");
 
         if (config.isVisitorDataOmitted()) {
             request.setHeader(HEADER_VISITOR_DATA_OMITTED, "true");
@@ -200,6 +201,7 @@ public abstract class NonMusicClient implements Client {
         String clientHeader = getClientHeader();
 
         if (clientHeader != null) {
+            request.setHeader("Origin", "https://www.youtube.com");
             request.setHeader("X-YouTube-Client-Name", clientHeader);
         }
 
@@ -248,6 +250,21 @@ public abstract class NonMusicClient implements Client {
         return json;
     }
 
+    protected boolean supportsExternalPlayerPoToken() {
+        return !supportsOAuth();
+    }
+
+    @Nullable
+    protected static String getRoutePlannerAddress(@NotNull HttpInterface httpInterface) {
+        Object address = httpInterface.getContext().getAttribute("yt-route-ip");
+
+        if (address instanceof java.net.InetAddress) {
+            return ((java.net.InetAddress) address).getHostAddress();
+        }
+
+        return null;
+    }
+
     @Nullable
     private String getClientHeader() {
         switch (getIdentifier()) {
@@ -261,6 +278,8 @@ public abstract class NonMusicClient implements Client {
                 return "5";
             case "TVHTML5":
                 return "7";
+            case "WEB_EMBEDDED_PLAYER":
+                return "56";
             default:
                 return null;
         }

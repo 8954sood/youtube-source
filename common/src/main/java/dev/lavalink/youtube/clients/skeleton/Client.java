@@ -169,6 +169,18 @@ public interface Client {
     }
 
     /**
+     * Variant that also exposes the active HTTP context. This lets PO Token providers use the
+     * same local address selected by the route planner for the player and GVS requests.
+     */
+    @NotNull
+    default URI transformPlaybackUri(@NotNull HttpInterface httpInterface,
+                                     @NotNull URI originalUri,
+                                     @NotNull URI resolvedPlaybackUri,
+                                     @NotNull String videoId) {
+        return transformPlaybackUri(originalUri, resolvedPlaybackUri, videoId);
+    }
+
+    /**
      * Builds an audio track with the given parameters.
      * Hint: You can use {@link YoutubeAudioSourceManager#buildAudioTrack(AudioTrackInfo)} to
      * build a track with the given AudioTrackInfo.

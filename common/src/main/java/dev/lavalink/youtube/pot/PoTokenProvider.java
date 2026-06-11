@@ -38,4 +38,23 @@ public interface PoTokenProvider {
                              @NotNull String clientName,
                              @Nullable String visitorData,
                              @NotNull String tokenType);
+
+    /**
+     * Fetch a PO Token while preserving the local address selected by an HTTP route planner.
+     *
+     * <p>The default implementation keeps existing providers source-compatible. Providers that
+     * perform network requests should override this method and bind those requests to
+     * {@code sourceAddress} when it is present.
+     *
+     * @param sourceAddress the selected local IP address, or {@code null} when no route planner
+     *                      address has been selected yet.
+     */
+    @Nullable
+    default PoTokenResult fetchToken(@NotNull String videoId,
+                                     @NotNull String clientName,
+                                     @Nullable String visitorData,
+                                     @NotNull String tokenType,
+                                     @Nullable String sourceAddress) {
+        return fetchToken(videoId, clientName, visitorData, tokenType);
+    }
 }

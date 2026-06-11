@@ -8,6 +8,8 @@ public class ExternalProviderConfig {
     private String command;
     private long timeoutMs = 5000;
     private long cacheTtlSeconds = 300;
+    private boolean playerTokenEnabled = false;
+    private boolean gvsTokenEnabled = true;
 
     public boolean isEnabled() {
         return enabled;
@@ -25,6 +27,14 @@ public class ExternalProviderConfig {
         return cacheTtlSeconds;
     }
 
+    public boolean isPlayerTokenEnabled() {
+        return playerTokenEnabled;
+    }
+
+    public boolean isGvsTokenEnabled() {
+        return gvsTokenEnabled;
+    }
+
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
     }
@@ -39,5 +49,13 @@ public class ExternalProviderConfig {
 
     public void setCacheTtlSeconds(long cacheTtlSeconds) {
         this.cacheTtlSeconds = cacheTtlSeconds;
+    }
+
+    public void setPlayerTokenEnabled(boolean playerTokenEnabled) {
+        this.playerTokenEnabled = playerTokenEnabled;
+    }
+
+    public void setGvsTokenEnabled(boolean gvsTokenEnabled) {
+        this.gvsTokenEnabled = gvsTokenEnabled;
     }
 }
