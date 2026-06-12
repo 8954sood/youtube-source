@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * A persistent HTTP stream implementation that uses the range parameter instead of HTTP headers for specifying
@@ -28,8 +30,22 @@ public class YoutubePersistentHttpStream extends PersistentHttpStream {
      * @param contentUrl The URL of the resource
      * @param contentLength The length of the resource in bytes
      */
+    private final String videoId;
+    private final long playbackStartedAt;
+    private final AtomicBoolean firstReadLogged = new AtomicBoolean();
+
     public YoutubePersistentHttpStream(HttpInterface httpInterface, URI contentUrl, long contentLength) {
+        this(httpInterface, contentUrl, contentLength, null, 0);
+    }
+
+    public YoutubePersistentHttpStream(HttpInterface httpInterface,
+                                       URI contentUrl,
+                                       long contentLength,
+                                       String videoId,
+                                       long playbackStartedAt) {
         super(httpInterface, contentUrl, contentLength);
+        this.videoId = videoId;
+        this.playbackStartedAt = playbackStartedAt;
     }
 
     @Override
@@ -68,6 +84,11 @@ public class YoutubePersistentHttpStream extends PersistentHttpStream {
                         handleRangeEnd(null, attemptReconnect);
                     }
                 }
+            }
+
+            if (result > 0 && videoId != null && firstReadLogged.compareAndSet(false, true)) {
+                log.info("First googlevideo stream read succeeded videoId={} bytes={} elapsedMs={}",
+                    videoId, result, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - playbackStartedAt));
             }
 
             return result;

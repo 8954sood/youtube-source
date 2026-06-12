@@ -41,6 +41,7 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
     private final boolean playerTokenEnabled;
     private final boolean gvsTokenEnabled;
     private final ConcurrentMap<String, String> visitorDataByVideoAndClient = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Object> requestLocks = new ConcurrentHashMap<>();
 
     public ExternalPoTokenProvider(@NotNull String command, long timeoutMs, @NotNull PoTokenCache cache) {
         this(command, timeoutMs, cache, true, true);
@@ -74,27 +75,66 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                                     @Nullable String visitorData,
                                     @NotNull String tokenType,
                                     @Nullable String sourceAddress) {
-        if ((TOKEN_TYPE_PLAYER.equals(tokenType) && !playerTokenEnabled)
-            || (TOKEN_TYPE_GVS.equals(tokenType) && !gvsTokenEnabled)) {
+        String normalizedTokenType = PoTokenCache.normalizeTokenType(tokenType);
+
+        if ((TOKEN_TYPE_PLAYER.equals(normalizedTokenType) && !playerTokenEnabled)
+            || (TOKEN_TYPE_GVS.equals(normalizedTokenType) && !gvsTokenEnabled)) {
             return null;
         }
 
-        String sessionKey = videoId + "|" + clientName + "|" + (sourceAddress != null ? sourceAddress : "");
+        String normalizedClientName = PoTokenCache.normalizeClientName(clientName);
+        String sessionKey = videoId + "|" + normalizedClientName + "|" + (sourceAddress != null ? sourceAddress : "");
         String effectiveVisitorData = visitorData;
 
-        if (effectiveVisitorData == null && tokenType.equals(TOKEN_TYPE_GVS)) {
+        if (effectiveVisitorData == null && normalizedTokenType.equals(TOKEN_TYPE_GVS)) {
             effectiveVisitorData = visitorDataByVideoAndClient.get(sessionKey);
         }
 
-        PoTokenResult cached = cache.get(videoId, clientName, tokenType, effectiveVisitorData, sourceAddress);
-        String tokenLabel = tokenType.equals(TOKEN_TYPE_PLAYER) ? "Player" : "GVS";
+        String keyFingerprint = PoTokenCache.keyFingerprint(
+            videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+        PoTokenResult cached = cache.get(
+            videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+        String tokenLabel = normalizedTokenType.equals(TOKEN_TYPE_PLAYER) ? "Player" : "GVS";
 
         if (cached != null) {
-            log.info("{} PO token provider cache hit videoId={} client={}", tokenLabel, videoId, clientName);
+            log.info("{} PO token provider cache hit videoId={} client={} key={}",
+                tokenLabel, videoId, normalizedClientName, keyFingerprint);
             return cached;
         }
 
-        log.info("{} PO token provider cache miss videoId={} client={}", tokenLabel, videoId, clientName);
+        Object requestLock = requestLocks.computeIfAbsent(keyFingerprint, ignored -> new Object());
+
+        try {
+            synchronized (requestLock) {
+                cached = cache.get(
+                    videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+
+                if (cached != null) {
+                    log.info("{} PO token provider cache hit after wait videoId={} client={} key={}",
+                        tokenLabel, videoId, normalizedClientName, keyFingerprint);
+                    return cached;
+                }
+
+                return fetchUncached(videoId, normalizedClientName, effectiveVisitorData,
+                    normalizedTokenType, sourceAddress, sessionKey, keyFingerprint, tokenLabel);
+            }
+        } finally {
+            requestLocks.remove(keyFingerprint, requestLock);
+        }
+    }
+
+    @Nullable
+    private PoTokenResult fetchUncached(@NotNull String videoId,
+                                        @NotNull String clientName,
+                                        @Nullable String effectiveVisitorData,
+                                        @NotNull String tokenType,
+                                        @Nullable String sourceAddress,
+                                        @NotNull String sessionKey,
+                                        @NotNull String keyFingerprint,
+                                        @NotNull String tokenLabel) {
+        long startedAt = System.nanoTime();
+        log.info("{} PO token provider cache miss videoId={} client={} key={}",
+            tokenLabel, videoId, clientName, keyFingerprint);
         log.info("Calling external PO token provider tokenType={} videoId={} client={}",
             tokenType, videoId, clientName);
 
@@ -189,13 +229,17 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                 visitorDataByVideoAndClient.put(sessionKey, resolvedVisitorData);
             }
 
-            log.info("External PO token provider succeeded tokenType={} videoId={} client={}",
-                tokenType, videoId, clientName);
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            log.info("External PO token provider succeeded tokenType={} videoId={} client={} key={} elapsedMs={}",
+                tokenType, videoId, clientName, keyFingerprint, elapsedMs);
 
             return result;
         } catch (Exception e) {
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
             log.warn("External PO token provider failed videoId={} client={} tokenType={}",
                 videoId, clientName, tokenType, e);
+            log.info("External PO token provider finished unsuccessfully tokenType={} videoId={} client={} key={} elapsedMs={}",
+                tokenType, videoId, clientName, keyFingerprint, elapsedMs);
             return null;
         } finally {
             if (process != null && process.isAlive()) {

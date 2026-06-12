@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static com.sedmelluq.discord.lavaplayer.tools.DataFormatTools.decodeUrlEncodedItems;
 import static com.sedmelluq.discord.lavaplayer.tools.Units.CONTENT_LENGTH_UNKNOWN;
@@ -32,6 +33,7 @@ public abstract class StreamingNonMusicClient extends NonMusicClient {
     public TrackFormats loadFormats(@NotNull YoutubeAudioSourceManager source,
                                     @NotNull HttpInterface httpInterface,
                                     @NotNull String videoId) throws CannotBeLoaded, IOException {
+        long startedAt = System.nanoTime();
         JsonBrowser json = loadTrackInfoFromInnertube(source, httpInterface, videoId, null, true);
         JsonBrowser playabilityStatus = json.get("playabilityStatus");
         JsonBrowser videoDetails = json.get("videoDetails");
@@ -68,6 +70,9 @@ public abstract class StreamingNonMusicClient extends NonMusicClient {
             log.warn("Loading formats either failed to load or were skipped due to missing fields, json: {}", streamingData.format());
         }
 
+        log.info("Loaded YouTube formats videoId={} client={} formatCount={} elapsedMs={}",
+            videoId, getIdentifier(), formats.size(),
+            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
         return new TrackFormats(formats, playerScript.url);
     }
 

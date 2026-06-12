@@ -56,6 +56,29 @@ class PoTokenCacheTest {
     }
 
     @Test
+    void playerTokenIgnoresPerRequestSourceAddress() {
+        PoTokenCache cache = new PoTokenCache(300);
+        cache.put("vid", "MWEB", PoTokenProvider.TOKEN_TYPE_PLAYER, "vd", "2001:db8::1",
+            new PoTokenResult("t", "vd", 0));
+
+        assertNotNull(cache.get(
+            "vid", "MWEB", PoTokenProvider.TOKEN_TYPE_PLAYER, "vd", "2001:db8::2"));
+    }
+
+    @Test
+    void normalizesKnownClientAliasesAndTokenType() {
+        PoTokenCache cache = new PoTokenCache(300);
+        cache.put("vid", "TV", "PLAYER", " vd ", "2001:db8::1",
+            new PoTokenResult("t", "vd", 0));
+
+        assertNotNull(cache.get(
+            "vid", "TVHTML5", PoTokenProvider.TOKEN_TYPE_PLAYER, "vd", "2001:db8::2"));
+        assertEquals(
+            PoTokenCache.keyFingerprint("vid", "MWeb", "player", null, "2001:db8::1"),
+            PoTokenCache.keyFingerprint("vid", "MWEB", "PLAYER", null, "2001:db8::2"));
+    }
+
+    @Test
     void nullVisitorDataIsAValidKey() {
         PoTokenCache cache = new PoTokenCache(300);
         cache.put("vid", "WEB", PoTokenProvider.TOKEN_TYPE_GVS, null, new PoTokenResult("t", null, 0));

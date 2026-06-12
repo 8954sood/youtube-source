@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static com.sedmelluq.discord.lavaplayer.container.Formats.MIME_AUDIO_WEBM;
 import static com.sedmelluq.discord.lavaplayer.tools.DataFormatTools.decodeUrlEncodedItems;
@@ -61,6 +62,7 @@ public class YoutubeAudioTrack extends DelegatedAudioTrack {
 
   @Override
   public void process(LocalAudioTrackExecutor localExecutor) throws Exception {
+    long playbackStartedAt = System.nanoTime();
     Client[] clients = sourceManager.getClients();
 
     if (Arrays.stream(clients).noneMatch(Client::supportsFormatLoading)) {
@@ -93,7 +95,7 @@ public class YoutubeAudioTrack extends DelegatedAudioTrack {
         httpInterface.getContext().setAttribute(Client.OAUTH_CLIENT_ATTRIBUTE, client.supportsOAuth());
 
         try {
-          processWithClient(localExecutor, httpInterface, client, 0);
+          processWithClient(localExecutor, httpInterface, client, 0, playbackStartedAt);
           return;
         } catch (CannotBeLoaded e) {
           throw e;
@@ -127,29 +129,35 @@ public class YoutubeAudioTrack extends DelegatedAudioTrack {
   private void processWithClient(LocalAudioTrackExecutor localExecutor,
                                  HttpInterface httpInterface,
                                  Client client,
-                                 long streamPosition) throws CannotBeLoaded, Exception {
+                                 long streamPosition,
+                                 long playbackStartedAt) throws CannotBeLoaded, Exception {
     FormatWithUrl augmentedFormat = loadBestFormatWithUrl(httpInterface, client);
-    log.debug("Starting track with URL from client {}: {}", client.getIdentifier(), augmentedFormat.signedUrl);
+    log.info("Resolved playback format videoId={} client={} elapsedMs={}",
+        getIdentifier(), client.getIdentifier(),
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - playbackStartedAt));
 
     try {
       if (trackInfo.isStream || augmentedFormat.format.getContentLength() == CONTENT_LENGTH_UNKNOWN) {
         processStream(localExecutor, httpInterface, augmentedFormat);
       } else {
-        processStatic(localExecutor, httpInterface, augmentedFormat, streamPosition);
+        processStatic(localExecutor, httpInterface, augmentedFormat, streamPosition, playbackStartedAt);
       }
     } catch (StreamExpiredException e) {
-      processWithClient(localExecutor, httpInterface, client, e.lastStreamPosition);
+      processWithClient(localExecutor, httpInterface, client, e.lastStreamPosition, playbackStartedAt);
     }
   }
 
   private void processStatic(LocalAudioTrackExecutor localExecutor,
                              HttpInterface httpInterface,
                              FormatWithUrl augmentedFormat,
-                             long streamPosition) throws Exception {
+                             long streamPosition,
+                             long playbackStartedAt) throws Exception {
     YoutubePersistentHttpStream stream = null;
 
     try {
-      stream = new YoutubePersistentHttpStream(httpInterface, augmentedFormat.signedUrl, augmentedFormat.format.getContentLength());
+      stream = new YoutubePersistentHttpStream(
+          httpInterface, augmentedFormat.signedUrl, augmentedFormat.format.getContentLength(),
+          getIdentifier(), playbackStartedAt);
 
       if (streamPosition > 0) {
         stream.seek(streamPosition);

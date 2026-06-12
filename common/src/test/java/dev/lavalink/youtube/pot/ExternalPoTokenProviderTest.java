@@ -13,6 +13,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -72,6 +76,56 @@ class ExternalPoTokenProviderTest {
         provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
 
         assertEquals(1, Files.readAllLines(counter).size(), "provider should be spawned only once");
+    }
+
+    @Test
+    void directLoadPlayerTokenIsReusedAcrossRoutePlannerAddressesAndClientAliases() throws IOException {
+        Path counter = tempDir.resolve("count.txt");
+        String cmd = writeScript("route-counting.sh",
+            "echo run >> '" + counter.toAbsolutePath() + "'\n" +
+            "echo '{\"poToken\":\"tok\",\"visitorData\":\"vd\",\"expiresAtEpochMs\":9999999999999}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(cmd, 5000, new PoTokenCache(300));
+
+        assertNotNull(provider.fetchToken(
+            "vid", "TV", null, PoTokenProvider.TOKEN_TYPE_PLAYER, "2001:db8::1"));
+        assertNotNull(provider.fetchToken(
+            "vid", "TVHTML5", null, PoTokenProvider.TOKEN_TYPE_PLAYER, "2001:db8::2"));
+
+        assertEquals(1, Files.readAllLines(counter).size(),
+            "direct load and playback should share one player token");
+    }
+
+    @Test
+    void concurrentRequestsUseSingleExternalProcess() throws Exception {
+        Path counter = tempDir.resolve("count.txt");
+        String cmd = writeScript("concurrent-counting.sh",
+            "echo run >> '" + counter.toAbsolutePath() + "'\n" +
+            "sleep 1\n" +
+            "echo '{\"poToken\":\"tok\",\"expiresAtEpochMs\":9999999999999}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(cmd, 5000, new PoTokenCache(300));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<PoTokenResult> first = executor.submit(() -> {
+                start.await();
+                return provider.fetchToken(
+                    "vid", "MWEB", null, PoTokenProvider.TOKEN_TYPE_PLAYER, "2001:db8::1");
+            });
+            Future<PoTokenResult> second = executor.submit(() -> {
+                start.await();
+                return provider.fetchToken(
+                    "vid", "MWEB", null, PoTokenProvider.TOKEN_TYPE_PLAYER, "2001:db8::2");
+            });
+            start.countDown();
+
+            assertNotNull(first.get());
+            assertNotNull(second.get());
+            assertEquals(1, Files.readAllLines(counter).size(),
+                "concurrent cache misses should be coalesced");
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
