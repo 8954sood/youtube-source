@@ -7,6 +7,7 @@ public class ExternalProviderConfig {
     private boolean enabled = false;
     private String command;
     private long timeoutMs = 5000;
+    private long criticalPathTimeoutMs = 0;
     private long cacheTtlSeconds = 300;
     private boolean playerTokenEnabled = false;
     private boolean gvsTokenEnabled = true;
@@ -21,6 +22,10 @@ public class ExternalProviderConfig {
 
     public long getTimeoutMs() {
         return timeoutMs;
+    }
+
+    public long getCriticalPathTimeoutMs() {
+        return criticalPathTimeoutMs;
     }
 
     public long getCacheTtlSeconds() {
@@ -45,6 +50,10 @@ public class ExternalProviderConfig {
 
     public void setTimeoutMs(long timeoutMs) {
         this.timeoutMs = timeoutMs;
+    }
+
+    public void setCriticalPathTimeoutMs(long criticalPathTimeoutMs) {
+        this.criticalPathTimeoutMs = criticalPathTimeoutMs;
     }
 
     public void setCacheTtlSeconds(long cacheTtlSeconds) {

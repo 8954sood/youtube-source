@@ -258,14 +258,15 @@ public class YoutubePluginLoader implements AudioPlayerManagerConfiguration {
             ExternalPoTokenProvider provider = new ExternalPoTokenProvider(
                 command,
                 config.getTimeoutMs(),
+                config.getCriticalPathTimeoutMs(),
                 cache,
                 config.isPlayerTokenEnabled(),
                 config.isGvsTokenEnabled()
             );
             YoutubeSource.setPoTokenProvider(provider);
             log.info("External PO token provider enabled");
-            log.info("External PO token provider registered: command='{}' timeoutMs={} cacheTtlSeconds={} playerTokenEnabled={} gvsTokenEnabled={}",
-                command, config.getTimeoutMs(), config.getCacheTtlSeconds(),
+            log.info("External PO token provider registered: command='{}' timeoutMs={} criticalPathTimeoutMs={} cacheTtlSeconds={} playerTokenEnabled={} gvsTokenEnabled={}",
+                command, config.getTimeoutMs(), config.getCriticalPathTimeoutMs(), config.getCacheTtlSeconds(),
                 config.isPlayerTokenEnabled(), config.isGvsTokenEnabled());
         } catch (Exception e) {
             log.error("Failed to initialise external PO token provider. Continuing without it.", e);

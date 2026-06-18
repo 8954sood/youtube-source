@@ -33,6 +33,9 @@ public class YoutubePersistentHttpStream extends PersistentHttpStream {
     private final String videoId;
     private final long playbackStartedAt;
     private final AtomicBoolean firstReadLogged = new AtomicBoolean();
+    private byte[] prefetchedBytes;
+    private int prefetchedOffset;
+    private int prefetchedLength;
 
     public YoutubePersistentHttpStream(HttpInterface httpInterface, URI contentUrl, long contentLength) {
         this(httpInterface, contentUrl, contentLength, null, 0);
@@ -63,6 +66,21 @@ public class YoutubePersistentHttpStream extends PersistentHttpStream {
 
     @Override
     protected int internalRead(byte[] b, int off, int len, boolean attemptReconnect) throws IOException {
+        if (prefetchedOffset < prefetchedLength) {
+            int copied = Math.min(len, prefetchedLength - prefetchedOffset);
+            System.arraycopy(prefetchedBytes, prefetchedOffset, b, off, copied);
+            prefetchedOffset += copied;
+            position += copied;
+
+            if (prefetchedOffset >= prefetchedLength) {
+                prefetchedBytes = null;
+                prefetchedOffset = 0;
+                prefetchedLength = 0;
+            }
+
+            return copied;
+        }
+
         connect(false);
         long nextExpectedPosition = position + len + (len / 2);
 
@@ -96,6 +114,24 @@ public class YoutubePersistentHttpStream extends PersistentHttpStream {
             handleRangeEnd(e, attemptReconnect);
             return internalRead(b, off, len, false);
         }
+    }
+
+    public void prefetchFirstBytes(int length) throws IOException {
+        if (length <= 0 || position != 0 || prefetchedLength > 0) {
+            return;
+        }
+
+        byte[] buffer = new byte[length];
+        int read = internalRead(buffer, 0, buffer.length, true);
+
+        if (read <= 0) {
+            return;
+        }
+
+        position -= read;
+        prefetchedBytes = buffer;
+        prefetchedOffset = 0;
+        prefetchedLength = read;
     }
 
     @Override

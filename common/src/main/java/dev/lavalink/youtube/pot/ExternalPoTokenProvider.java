@@ -14,9 +14,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A {@link PoTokenProvider} that delegates to an external executable, invoked once per
@@ -34,14 +41,17 @@ import java.util.concurrent.TimeUnit;
  */
 public class ExternalPoTokenProvider implements PoTokenProvider {
     private static final Logger log = LoggerFactory.getLogger(ExternalPoTokenProvider.class);
+    private static final long BACKGROUND_FETCH_DELAY_MS = 2000;
 
     private final String command;
     private final long timeoutMs;
+    private final long criticalPathTimeoutMs;
     private final PoTokenCache cache;
     private final boolean playerTokenEnabled;
     private final boolean gvsTokenEnabled;
     private final ConcurrentMap<String, String> visitorDataByVideoAndClient = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, Object> requestLocks = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, CompletableFuture<PoTokenResult>> inFlightRequests = new ConcurrentHashMap<>();
+    private final ExecutorService executor;
 
     public ExternalPoTokenProvider(@NotNull String command, long timeoutMs, @NotNull PoTokenCache cache) {
         this(command, timeoutMs, cache, true, true);
@@ -52,11 +62,22 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
                                    @NotNull PoTokenCache cache,
                                    boolean playerTokenEnabled,
                                    boolean gvsTokenEnabled) {
+        this(command, timeoutMs, timeoutMs, cache, playerTokenEnabled, gvsTokenEnabled);
+    }
+
+    public ExternalPoTokenProvider(@NotNull String command,
+                                   long timeoutMs,
+                                   long criticalPathTimeoutMs,
+                                   @NotNull PoTokenCache cache,
+                                   boolean playerTokenEnabled,
+                                   boolean gvsTokenEnabled) {
         this.command = command;
         this.timeoutMs = timeoutMs;
+        this.criticalPathTimeoutMs = Math.max(0, Math.min(criticalPathTimeoutMs, timeoutMs));
         this.cache = cache;
         this.playerTokenEnabled = playerTokenEnabled;
         this.gvsTokenEnabled = gvsTokenEnabled;
+        this.executor = Executors.newCachedThreadPool(new ProviderThreadFactory());
     }
 
     @Override
@@ -90,10 +111,11 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
             effectiveVisitorData = visitorDataByVideoAndClient.get(sessionKey);
         }
 
+        final String finalEffectiveVisitorData = effectiveVisitorData;
         String keyFingerprint = PoTokenCache.keyFingerprint(
-            videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+            videoId, normalizedClientName, normalizedTokenType, finalEffectiveVisitorData, sourceAddress);
         PoTokenResult cached = cache.get(
-            videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+            videoId, normalizedClientName, normalizedTokenType, finalEffectiveVisitorData, sourceAddress);
         String tokenLabel = normalizedTokenType.equals(TOKEN_TYPE_PLAYER) ? "Player" : "GVS";
 
         if (cached != null) {
@@ -102,25 +124,75 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
             return cached;
         }
 
-        Object requestLock = requestLocks.computeIfAbsent(keyFingerprint, ignored -> new Object());
+        CompletableFuture<PoTokenResult> future = inFlightRequests.computeIfAbsent(keyFingerprint, ignored ->
+            startFetch(videoId, normalizedClientName, finalEffectiveVisitorData,
+                normalizedTokenType, sourceAddress, sessionKey, keyFingerprint, tokenLabel));
 
         try {
-            synchronized (requestLock) {
-                cached = cache.get(
-                    videoId, normalizedClientName, normalizedTokenType, effectiveVisitorData, sourceAddress);
+            PoTokenResult result = criticalPathTimeoutMs == 0
+                ? future.getNow(null)
+                : future.get(criticalPathTimeoutMs, TimeUnit.MILLISECONDS);
 
-                if (cached != null) {
-                    log.info("{} PO token provider cache hit after wait videoId={} client={} key={}",
-                        tokenLabel, videoId, normalizedClientName, keyFingerprint);
-                    return cached;
-                }
-
-                return fetchUncached(videoId, normalizedClientName, effectiveVisitorData,
-                    normalizedTokenType, sourceAddress, sessionKey, keyFingerprint, tokenLabel);
+            if (result != null) {
+                return result;
             }
+
+            return cache.get(
+                videoId, normalizedClientName, normalizedTokenType, finalEffectiveVisitorData, sourceAddress);
+        } catch (TimeoutException e) {
+            log.info("{} PO token provider still running after {}ms videoId={} client={} key={}, continuing without token",
+                tokenLabel, criticalPathTimeoutMs, videoId, normalizedClientName, keyFingerprint);
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            log.warn("External PO token provider failed videoId={} client={} tokenType={}",
+                videoId, normalizedClientName, normalizedTokenType, e.getCause());
+            return null;
         } finally {
-            requestLocks.remove(keyFingerprint, requestLock);
+            if (future.isDone()) {
+                inFlightRequests.remove(keyFingerprint, future);
+            }
         }
+    }
+
+    @NotNull
+    private CompletableFuture<PoTokenResult> startFetch(@NotNull String videoId,
+                                                        @NotNull String clientName,
+                                                        @Nullable String effectiveVisitorData,
+                                                        @NotNull String tokenType,
+                                                        @Nullable String sourceAddress,
+                                                        @NotNull String sessionKey,
+                                                        @NotNull String keyFingerprint,
+                                                        @NotNull String tokenLabel) {
+        CompletableFuture<PoTokenResult> future = CompletableFuture.supplyAsync(() ->
+            fetchUncachedAfterOptionalDelay(videoId, clientName, effectiveVisitorData, tokenType, sourceAddress,
+                sessionKey, keyFingerprint, tokenLabel), executor);
+        future.whenComplete((ignoredResult, ignoredError) -> inFlightRequests.remove(keyFingerprint, future));
+        return future;
+    }
+
+    @Nullable
+    private PoTokenResult fetchUncachedAfterOptionalDelay(@NotNull String videoId,
+                                                          @NotNull String clientName,
+                                                          @Nullable String effectiveVisitorData,
+                                                          @NotNull String tokenType,
+                                                          @Nullable String sourceAddress,
+                                                          @NotNull String sessionKey,
+                                                          @NotNull String keyFingerprint,
+                                                          @NotNull String tokenLabel) {
+        if (criticalPathTimeoutMs == 0) {
+            try {
+                Thread.sleep(BACKGROUND_FETCH_DELAY_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+
+        return fetchUncached(videoId, clientName, effectiveVisitorData, tokenType, sourceAddress,
+            sessionKey, keyFingerprint, tokenLabel);
     }
 
     @Nullable
@@ -263,5 +335,16 @@ public class ExternalPoTokenProvider implements PoTokenProvider {
         }
 
         return summary.length() <= 500 ? summary : summary.substring(0, 500) + "...";
+    }
+
+    private static final class ProviderThreadFactory implements ThreadFactory {
+        private final AtomicInteger threadId = new AtomicInteger();
+
+        @Override
+        public Thread newThread(@NotNull Runnable runnable) {
+            Thread thread = new Thread(runnable, "external-po-token-provider-" + threadId.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        }
     }
 }

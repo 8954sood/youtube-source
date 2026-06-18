@@ -563,6 +563,12 @@ public abstract class NonMusicClient implements Client {
             return AudioReference.NO_TRACK;
         }
 
+        try {
+            source.prewarmPlaybackFormat(httpInterface, tracks.get(0).getInfo().identifier);
+        } catch (Throwable t) {
+            log.debug("Failed to prewarm first search result for query {}", searchQuery, t);
+        }
+
         return new BasicAudioPlaylist("Search results for: " + searchQuery, tracks, null, true);
     }
 

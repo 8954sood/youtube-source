@@ -316,6 +316,7 @@ plugins:
         enabled: true
         command: "/opt/youtube-pot-provider/get-token"
         timeoutMs: 40000
+        criticalPathTimeoutMs: 0
         cacheTtlSeconds: 300
         playerTokenEnabled: false
         gvsTokenEnabled: true
@@ -336,11 +337,19 @@ write one JSON object to stdout:
 ```
 
 Provider failures, timeouts, invalid output, and non-zero exits fall back to the existing client
-behavior. Token and visitor data values are not logged.
+behavior. `timeoutMs` is the hard limit for the external process. `criticalPathTimeoutMs` is the
+maximum time playback waits for a cache miss before continuing without a token. The default `0`
+starts the provider in the background and keeps cache misses off the playback startup path; if the
+provider finishes later, the successful result is still cached for the next request. Token and
+visitor data values are not logged.
 
 For the OAuth-authenticated `TVHTML5` client, the currently verified combination is a video-bound
 player token with `playerTokenEnabled: true` and `gvsTokenEnabled: false`. Other clients may require
 GVS tokens instead, so keep the two token types independently configurable.
+
+When search results are loaded, the plugin prewarms the first result's playback format and final
+stream URL with the first playback-capable client. A subsequent prepared-track play request can then
+reuse that short-lived result instead of resolving the Innertube player response and cipher again.
 
 ## Using a remote cipher server
 

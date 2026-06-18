@@ -196,6 +196,59 @@ class ExternalPoTokenProviderTest {
     }
 
     @Test
+    void criticalPathTimeoutReturnsNullButCachesLateSuccess() throws Exception {
+        Path counter = tempDir.resolve("count.txt");
+        String cmd = writeScript("slow-success.sh",
+            "echo run >> '" + counter.toAbsolutePath() + "'\n" +
+            "sleep 1\n" +
+            "echo '{\"poToken\":\"tok\",\"visitorData\":\"vd\",\"expiresAtEpochMs\":9999999999999}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(
+            cmd, 5000, 100, new PoTokenCache(300), true, true);
+
+        long start = System.currentTimeMillis();
+        PoTokenResult first = provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
+        long elapsed = System.currentTimeMillis() - start;
+
+        assertNull(first);
+        org.junit.jupiter.api.Assertions.assertTrue(elapsed < 1000,
+            "critical path should not wait for the full provider runtime, took " + elapsed + "ms");
+
+        Thread.sleep(1500);
+
+        PoTokenResult second = provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
+        assertNotNull(second);
+        assertEquals("tok", second.poToken);
+        assertEquals(1, Files.readAllLines(counter).size(),
+            "late provider success should populate the cache without respawning");
+    }
+
+    @Test
+    void zeroCriticalPathTimeoutDelaysBackgroundFetch() throws Exception {
+        Path counter = tempDir.resolve("count.txt");
+        String cmd = writeScript("delayed-background.sh",
+            "echo run >> '" + counter.toAbsolutePath() + "'\n" +
+            "echo '{\"poToken\":\"tok\",\"visitorData\":\"vd\",\"expiresAtEpochMs\":9999999999999}'\n");
+        ExternalPoTokenProvider provider = new ExternalPoTokenProvider(
+            cmd, 5000, 0, new PoTokenCache(300), true, true);
+
+        long start = System.currentTimeMillis();
+        PoTokenResult first = provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
+        long elapsed = System.currentTimeMillis() - start;
+
+        assertNull(first);
+        org.junit.jupiter.api.Assertions.assertTrue(elapsed < 500,
+            "zero critical path timeout should return immediately, took " + elapsed + "ms");
+        org.junit.jupiter.api.Assertions.assertFalse(Files.exists(counter),
+            "background provider should not start on the immediate playback path");
+
+        Thread.sleep(3000);
+
+        PoTokenResult second = provider.fetchToken("vid", "WEB", "seed", PoTokenProvider.TOKEN_TYPE_GVS);
+        assertNotNull(second);
+        assertEquals(1, Files.readAllLines(counter).size());
+    }
+
+    @Test
     void missingExpiresAtDefaultsToZero() throws IOException {
         String cmd = writeScript("noexpiry.sh",
             "echo '{\"poToken\":\"tok\",\"visitorData\":\"vd\"}'\n");

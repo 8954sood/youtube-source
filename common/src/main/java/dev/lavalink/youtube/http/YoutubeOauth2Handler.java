@@ -19,6 +19,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 public class YoutubeOauth2Handler {
@@ -32,9 +35,11 @@ public class YoutubeOauth2Handler {
     private static final String CLIENT_SECRET = "SboVhoG9s0rNafixCSGGKXAT";
     private static final String SCOPES = "http://gdata.youtube.com https://www.googleapis.com/auth/youtube";
     private static final String OAUTH_FETCH_CONTEXT_ATTRIBUTE = "yt-oauth";
+    private static final long OAUTH_REFRESH_RETRY_DELAY_MS = TimeUnit.SECONDS.toMillis(15);
     public static final String OAUTH_INJECT_CONTEXT_ATTRIBUTE = "yt-oauth-token";
 
     private final HttpInterfaceManager httpInterfaceManager;
+    private final ScheduledExecutorService tokenRefreshExecutor;
 
     private boolean enabled;
     private String refreshToken;
@@ -42,9 +47,15 @@ public class YoutubeOauth2Handler {
     private String tokenType;
     private String accessToken;
     private long tokenExpires;
+    private ScheduledFuture<?> scheduledRefresh;
 
     public YoutubeOauth2Handler(HttpInterfaceManager httpInterfaceManager) {
         this.httpInterfaceManager = httpInterfaceManager;
+        this.tokenRefreshExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "youtube-source-oauth-refresh");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     public void setRefreshToken(@Nullable String refreshToken, boolean skipInitialization) {
@@ -301,6 +312,37 @@ public class YoutubeOauth2Handler {
         tokenExpires = System.currentTimeMillis() + (tokenLifespan * 1000) - 60000;
 
         log.debug("OAuth access token updated. Access token expires in {} seconds.", tokenLifespan);
+        scheduleAccessTokenRefresh();
+    }
+
+    private synchronized void scheduleAccessTokenRefresh() {
+        if (DataFormatTools.isNullOrEmpty(refreshToken)) {
+            return;
+        }
+
+        if (scheduledRefresh != null) {
+            scheduledRefresh.cancel(false);
+        }
+
+        long delayMs = Math.max(1000, tokenExpires - System.currentTimeMillis());
+        scheduledRefresh = tokenRefreshExecutor.schedule(() -> {
+            try {
+                refreshAccessToken(false);
+                fetchErrorLogCount = 0;
+            } catch (Throwable t) {
+                if (++fetchErrorLogCount <= 3) {
+                    log.error("Background YouTube access token refresh failed", t);
+                } else {
+                    log.debug("Background YouTube access token refresh failed", t);
+                }
+
+                synchronized (this) {
+                    tokenExpires = System.currentTimeMillis() + OAUTH_REFRESH_RETRY_DELAY_MS;
+                    scheduleAccessTokenRefresh();
+                }
+            }
+        }, delayMs, TimeUnit.MILLISECONDS);
+        log.debug("Scheduled OAuth access token refresh in {}ms.", delayMs);
     }
 
     public void applyToken(HttpUriRequest request) {
@@ -324,7 +366,8 @@ public class YoutubeOauth2Handler {
                 }
 
                 // retry in 15 seconds to avoid spamming YouTube with requests.
-                tokenExpires = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(15);
+                tokenExpires = System.currentTimeMillis() + OAUTH_REFRESH_RETRY_DELAY_MS;
+                scheduleAccessTokenRefresh();
                 return;
             }
 

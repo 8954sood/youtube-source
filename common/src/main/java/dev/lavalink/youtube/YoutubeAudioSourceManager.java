@@ -23,6 +23,9 @@ import dev.lavalink.youtube.http.YoutubeAccessTokenTracker;
 import dev.lavalink.youtube.http.YoutubeHttpContextFilter;
 import dev.lavalink.youtube.http.YoutubeOauth2Handler;
 import dev.lavalink.youtube.track.YoutubeAudioTrack;
+import dev.lavalink.youtube.track.CachedPlaybackFormat;
+import dev.lavalink.youtube.track.format.StreamFormat;
+import dev.lavalink.youtube.track.format.TrackFormats;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.jetbrains.annotations.NotNull;
@@ -34,6 +37,8 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.net.URI;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -80,6 +85,7 @@ public class YoutubeAudioSourceManager implements AudioSourceManager {
     protected YoutubeOauth2Handler oauth2Handler;
     protected YoutubeHttpContextFilter contextFilter;
     protected CipherManager cipherManager;
+    private final ConcurrentMap<String, CachedPlaybackFormat> playbackFormatCache = new ConcurrentHashMap<>();
 
     public YoutubeAudioSourceManager() {
         this(true);
@@ -389,6 +395,73 @@ public class YoutubeAudioSourceManager implements AudioSourceManager {
     @NotNull
     public YoutubeAudioTrack buildAudioTrack(AudioTrackInfo trackInfo) {
         return new YoutubeAudioTrack(trackInfo, this);
+    }
+
+    public void prewarmPlaybackFormat(@NotNull HttpInterface httpInterface, @NotNull String videoId) {
+        for (Client client : clients) {
+            if (!client.supportsFormatLoading()) {
+                continue;
+            }
+
+            httpInterface.getContext().setAttribute(Client.OAUTH_CLIENT_ATTRIBUTE, client.supportsOAuth());
+
+            try {
+                CachedPlaybackFormat format = resolvePlaybackFormat(httpInterface, client, videoId);
+                playbackFormatCache.put(playbackCacheKey(videoId, client.getIdentifier()), format);
+                log.info("Prewarmed playback format videoId={} client={}", videoId, client.getIdentifier());
+                return;
+            } catch (CannotBeLoaded e) {
+                throw ExceptionTools.wrapUnfriendlyExceptions("This video cannot be loaded.", Severity.SUSPICIOUS, e.getCause());
+            } catch (Throwable t) {
+                log.debug("Failed to prewarm playback format videoId={} client={}", videoId, client.getIdentifier(), t);
+            }
+        }
+    }
+
+    @Nullable
+    public CachedPlaybackFormat getCachedPlaybackFormat(@NotNull String videoId, @NotNull String clientIdentifier) {
+        String key = playbackCacheKey(videoId, clientIdentifier);
+        CachedPlaybackFormat cached = playbackFormatCache.get(key);
+
+        if (cached == null) {
+            return null;
+        }
+
+        if (cached.isExpired()) {
+            playbackFormatCache.remove(key, cached);
+            return null;
+        }
+
+        return cached;
+    }
+
+    @NotNull
+    public CachedPlaybackFormat resolvePlaybackFormat(@NotNull HttpInterface httpInterface,
+                                                      @NotNull Client client,
+                                                      @NotNull String videoId) throws CannotBeLoaded, Exception {
+        if (!client.supportsFormatLoading()) {
+            throw new RuntimeException(client.getIdentifier() + " does not support loading of formats!");
+        }
+
+        TrackFormats formats = client.loadFormats(this, httpInterface, videoId);
+
+        if (formats == null) {
+            throw new FriendlyException("This video cannot be played", Severity.SUSPICIOUS, null);
+        }
+
+        StreamFormat format = formats.getBestFormat();
+        URI resolvedUrl = format.getUrl();
+
+        if (client.requirePlayerScript()) {
+            resolvedUrl = cipherManager.resolveFormatUrl(httpInterface, formats.getPlayerScriptUrl(), format);
+        }
+
+        resolvedUrl = client.transformPlaybackUri(httpInterface, format.getUrl(), resolvedUrl, videoId);
+        return new CachedPlaybackFormat(format, resolvedUrl, client.getIdentifier());
+    }
+
+    private static String playbackCacheKey(String videoId, String clientIdentifier) {
+        return videoId + "|" + clientIdentifier;
     }
 
     @NotNull

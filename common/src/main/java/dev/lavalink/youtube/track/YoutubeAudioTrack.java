@@ -17,7 +17,6 @@ import dev.lavalink.youtube.UrlTools.UrlInfo;
 import dev.lavalink.youtube.cipher.ScriptExtractionException;
 import dev.lavalink.youtube.clients.skeleton.Client;
 import dev.lavalink.youtube.track.format.StreamFormat;
-import dev.lavalink.youtube.track.format.TrackFormats;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -166,6 +165,10 @@ public class YoutubeAudioTrack extends DelegatedAudioTrack {
       if (augmentedFormat.format.getType().getMimeType().endsWith("/webm")) {
         processDelegate(new MatroskaAudioTrack(trackInfo, stream), localExecutor);
       } else {
+        if (streamPosition == 0) {
+          stream.prefetchFirstBytes(4096);
+        }
+
         processDelegate(new MpegAudioTrack(trackInfo, stream), localExecutor);
       }
     } catch (RuntimeException e) {
@@ -195,26 +198,15 @@ public class YoutubeAudioTrack extends DelegatedAudioTrack {
   @NotNull
   private FormatWithUrl loadBestFormatWithUrl(@NotNull HttpInterface httpInterface,
                                               @NotNull Client client) throws CannotBeLoaded, Exception {
-    if (!client.supportsFormatLoading()) {
-      throw new RuntimeException(client.getIdentifier() + " does not support loading of formats!");
+    CachedPlaybackFormat cached = sourceManager.getCachedPlaybackFormat(getIdentifier(), client.getIdentifier());
+
+    if (cached != null) {
+      log.info("Using prewarmed playback format videoId={} client={}", getIdentifier(), client.getIdentifier());
+      return new FormatWithUrl(cached.format, cached.signedUrl);
     }
 
-    TrackFormats formats = client.loadFormats(sourceManager, httpInterface, getIdentifier());
-
-    if (formats == null) {
-      throw new FriendlyException("This video cannot be played", Severity.SUSPICIOUS, null);
-    }
-
-    StreamFormat format = formats.getBestFormat();
-
-    URI resolvedUrl = format.getUrl();
-    if (client.requirePlayerScript()) {
-      resolvedUrl = sourceManager.getCipherManager()
-              .resolveFormatUrl(httpInterface, formats.getPlayerScriptUrl(), format);
-    }
-    resolvedUrl = client.transformPlaybackUri(httpInterface, format.getUrl(), resolvedUrl, getIdentifier());
-
-    return new FormatWithUrl(format, resolvedUrl);
+    CachedPlaybackFormat resolved = sourceManager.resolvePlaybackFormat(httpInterface, client, getIdentifier());
+    return new FormatWithUrl(resolved.format, resolved.signedUrl);
   }
 
   @Override
