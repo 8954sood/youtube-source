@@ -378,6 +378,10 @@ public class YoutubeAudioSourceManager implements AudioSourceManager {
         } else if (urlInfo != null && urlInfo.parameters.containsKey("list")) {
             String playlistId = urlInfo.parameters.get("list");
 
+            if ("1".equals(urlInfo.parameters.get("start_radio"))) {
+                return (client) -> client.loadVideo(this, httpInterface, trimmedId);
+            }
+
             if (playlistId.startsWith("RD")) {
                 return (client) -> client.loadMix(this, httpInterface, playlistId, trimmedId);
             }

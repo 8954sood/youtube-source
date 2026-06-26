@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -501,6 +502,69 @@ public abstract class NonMusicClient implements Client {
         long duration = DataFormatTools.durationTextToMillis(durationText);
         return buildAudioTrack(source, json, title, author, duration, videoId, false);
     }
+
+    @Nullable
+    protected String extractDirectVideoTitle(@NotNull JsonBrowser videoDetails,
+                                             @NotNull JsonBrowser microformat) {
+        JsonBrowser microformatTitle = microformat.get("title");
+
+        String title = firstNonEmpty(
+            videoDetails.get("title").text(),
+            microformatTitle.get("simpleText").text(),
+            microformatTitle.get("runs").index(0).get("text").text()
+        );
+
+        if ("Unknown title".equals(title)) {
+            return null;
+        }
+
+        return title;
+    }
+
+    @Nullable
+    protected String extractDirectVideoAuthor(@NotNull JsonBrowser videoDetails,
+                                              @NotNull JsonBrowser microformat) {
+        return firstNonEmpty(
+            videoDetails.get("author").text(),
+            microformat.get("ownerChannelName").text(),
+            microformat.get("ownerProfileUrl").text()
+        );
+    }
+
+    @Nullable
+    protected static String firstNonEmpty(@Nullable String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    @Nullable
+    protected String[] loadOembedMetadata(@NotNull HttpInterface httpInterface,
+                                          @NotNull String videoId) {
+        try {
+            String watchUrl = WATCH_URL + videoId;
+            String endpoint = "https://www.youtube.com/oembed?format=json&url="
+                + URLEncoder.encode(watchUrl, "UTF-8");
+            HttpGet request = new HttpGet(endpoint);
+
+            try (CloseableHttpResponse response = httpInterface.execute(request)) {
+                HttpClientTools.assertSuccessWithContent(response, "oembed response");
+                HttpClientTools.assertJsonContentType(response);
+                JsonBrowser json = JsonBrowser.parse(response.getEntity().getContent());
+                return new String[] {
+                    firstNonEmpty(json.get("title").text()),
+                    firstNonEmpty(json.get("author_name").text())
+                };
+            }
+        } catch (Throwable t) {
+            log.debug("Failed to load oEmbed metadata videoId={} client={}", videoId, getIdentifier(), t);
+            return null;
+        }
+    }
     //</editor-fold>
 
     @Override
@@ -526,14 +590,16 @@ public abstract class NonMusicClient implements Client {
         JsonBrowser videoDetails = json.get("videoDetails");
 
         JsonBrowser microformat = json.get("microformat").get("playerMicroformatRenderer");
-        String title = DataFormatTools.defaultOnNull(
-            videoDetails.get("title").text(),
-            microformat.get("title").get("simpleText").text()
-        );
-        String author = DataFormatTools.defaultOnNull(
-            videoDetails.get("author").text(),
-            microformat.get("ownerChannelName").text()
-        );
+        String title = extractDirectVideoTitle(videoDetails, microformat);
+        String author = extractDirectVideoAuthor(videoDetails, microformat);
+
+        if (title == null || author == null) {
+            String[] oembed = loadOembedMetadata(httpInterface, videoId);
+            if (oembed != null) {
+                title = firstNonEmpty(title, oembed[0]);
+                author = firstNonEmpty(author, oembed[1]);
+            }
+        }
 
         if (title == null) {
             title = "Unknown title";
