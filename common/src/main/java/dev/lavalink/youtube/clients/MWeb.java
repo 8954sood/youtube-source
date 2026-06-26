@@ -1,6 +1,8 @@
 package dev.lavalink.youtube.clients;
 
+import com.sedmelluq.discord.lavaplayer.tools.DataFormatTools;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
+import com.sedmelluq.discord.lavaplayer.tools.Units;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterface;
 import com.sedmelluq.discord.lavaplayer.track.AudioItem;
 import com.sedmelluq.discord.lavaplayer.track.AudioReference;
@@ -71,16 +73,30 @@ public class MWeb extends Web {
 
     @Override
     protected String extractPlaylistName(@NotNull JsonBrowser json) {
-        return json.get("header")
+        String pageTitle = json.get("header")
             .get("pageHeaderRenderer")
             .get("pageTitle")
+            .text();
+
+        if (pageTitle != null) {
+            return pageTitle;
+        }
+
+        return json.get("header")
+            .get("pageHeaderRenderer")
+            .get("content")
+            .get("pageHeaderViewModel")
+            .get("title")
+            .get("dynamicTextViewModel")
+            .get("text")
+            .get("content")
             .text();
     }
 
     @Override
     @NotNull
     protected JsonBrowser extractPlaylistVideoList(@NotNull JsonBrowser json) {
-        return json.get("contents")
+        JsonBrowser itemSection = json.get("contents")
             .get("singleColumnBrowseResultsRenderer")
             .get("tabs")
             .index(0)
@@ -89,10 +105,87 @@ public class MWeb extends Web {
             .get("sectionListRenderer")
             .get("contents")
             .index(0)
-            .get("itemSectionRenderer")
+            .get("itemSectionRenderer");
+
+        JsonBrowser legacyVideoList = itemSection
             .get("contents")
             .index(0)
             .get("playlistVideoListRenderer");
+
+        if (!legacyVideoList.isNull()) {
+            return legacyVideoList;
+        }
+
+        return itemSection.get("contents");
+    }
+
+    @Override
+    protected void extractPlaylistTracks(@NotNull JsonBrowser json,
+                                         @NotNull List<AudioTrack> tracks,
+                                         @NotNull YoutubeAudioSourceManager source) {
+        super.extractPlaylistTracks(json, tracks, source);
+
+        if (!tracks.isEmpty()) {
+            return;
+        }
+
+        JsonBrowser contents = json.get("contents");
+        if (contents.isNull()) {
+            contents = json;
+        }
+
+        if (contents.isNull()) {
+            return;
+        }
+
+        for (JsonBrowser track : contents.values()) {
+            JsonBrowser item = track.get("lockupViewModel");
+            if (item.isNull() || !"LOCKUP_CONTENT_TYPE_VIDEO".equals(item.get("contentType").text())) {
+                continue;
+            }
+
+            String videoId = item.get("contentId").text();
+            JsonBrowser metadata = item.get("metadata").get("lockupMetadataViewModel");
+            String title = metadata.get("title").get("content").text();
+            String author = metadata
+                .get("metadata")
+                .get("contentMetadataViewModel")
+                .get("metadataRows")
+                .index(0)
+                .get("metadataParts")
+                .index(0)
+                .get("text")
+                .get("content")
+                .text();
+            String lengthText = item
+                .get("contentImage")
+                .get("thumbnailViewModel")
+                .get("overlays")
+                .index(0)
+                .get("thumbnailBottomOverlayViewModel")
+                .get("badges")
+                .index(0)
+                .get("thumbnailBadgeViewModel")
+                .get("text")
+                .text();
+
+            if (videoId == null || title == null) {
+                continue;
+            }
+
+            long duration = lengthText == null
+                ? Units.DURATION_MS_UNKNOWN
+                : DataFormatTools.durationTextToMillis(lengthText);
+            tracks.add(buildAudioTrack(
+                source,
+                item,
+                title,
+                firstNonEmpty(author, "Unknown artist"),
+                duration,
+                videoId,
+                false
+            ));
+        }
     }
 
     @Override
